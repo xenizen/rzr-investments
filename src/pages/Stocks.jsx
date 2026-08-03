@@ -18,12 +18,24 @@ function Stocks() {
   }
 
   return (
-    <div id="stocks">
-      <input type="text" id="txtStockSymbol" name="txtStockSymbol" ref={symbolRef} />
-      <button type="button" id="btnGetPrice" name="btnGetPrice" onClick={handleGetPrice}>
-        Get Price
-      </button>
-      <label id="lblFoundPrice" name="lblFoundPrice">
+    <div id="stocks" className="stock-card">
+      <span className="stock-card-tag">Live Quote</span>
+      <h1>RZR Investments</h1>
+      <p className="stock-card-sub">Look up the latest price for any stock symbol.</p>
+      <div className="stock-form">
+        <input
+          type="text"
+          id="txtStockSymbol"
+          name="txtStockSymbol"
+          placeholder="e.g. AAPL"
+          ref={symbolRef}
+          className="stock-input"
+        />
+        <button type="button" id="btnGetPrice" name="btnGetPrice" onClick={handleGetPrice} className="stock-btn">
+          Get Price
+        </button>
+      </div>
+      <label id="lblFoundPrice" name="lblFoundPrice" className="stock-result">
         {priceLabel}
       </label>
     </div>
