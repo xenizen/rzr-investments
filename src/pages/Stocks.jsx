@@ -9,7 +9,7 @@ function Stocks() {
   async function handleGetPrice() {
     const symbol = symbolRef.current.value
     try {
-      const response = await fetch(`/api/stock-price?symbol=${encodeURIComponent(symbol)}`)
+      const response = await fetch(`${import.meta.env.BASE_URL}api/stock-price?symbol=${encodeURIComponent(symbol)}`)
       const data = await response.json()
       setPriceLabel(data.error ?? String(data.price))
     } catch {
