@@ -1,5 +1,5 @@
 // Feature: Get Stock Price
-// Covers: FE: Get Price of a Stock (Todoist 6h9fX4wQfGXW84Mm), BE: Get Price of a stock (Todoist 6h9fXFFPQfC67Wcm), FE: Wire Alpaca to get stock price (Todoist 6hCJ8QPpjPF4F7xF)
+// Covers: FE: Get Price of a Stock (Todoist 6h9fX4wQfGXW84Mm), BE: Get Price of a stock (Todoist 6h9fXFFPQfC67Wcm), FE: Wire Alpaca to get stock price (Todoist 6hCJ8QPpjPF4F7xF), FE: CSS Design (Todoist 6hCMP62PFGwCF3QF)
 
 import { expect, test } from '@playwright/test'
 
