@@ -1,5 +1,5 @@
 // Feature: Get Stock Price
-// Covers: FE: Get Price of a Stock (Todoist 6h9fX4wQfGXW84Mm), BE: Get Price of a stock (Todoist 6h9fXFFPQfC67Wcm)
+// Covers: FE: Get Price of a Stock (Todoist 6h9fX4wQfGXW84Mm), BE: Get Price of a stock (Todoist 6h9fXFFPQfC67Wcm), FE: Wire Alpaca to get stock price (Todoist 6hCJ8QPpjPF4F7xF)
 
 import { expect, test } from '@playwright/test'
 
@@ -39,5 +39,20 @@ test.describe('Get Stock Price', () => {
     await symbolField.fill('')
     await button.click()
     await expect(label).toHaveText('No Stock Entered')
+  })
+
+  test('strips leading spaces from the symbol before requesting a price', async ({ page }) => {
+    let requestedUrl = null
+    await page.route('**/api/stock-price**', async (route) => {
+      requestedUrl = new URL(route.request().url())
+      await route.fulfill({ json: { price: 123.45 } })
+    })
+
+    await page.goto('/')
+    await page.locator('#txtStockSymbol').fill('   AAPL')
+    await page.getByRole('button', { name: /get price/i }).click()
+
+    await expect(page.locator('#lblFoundPrice')).toHaveText('123.45')
+    expect(requestedUrl.searchParams.get('symbol')).toBe('AAPL')
   })
 })
