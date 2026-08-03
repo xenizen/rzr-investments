@@ -7,7 +7,7 @@ function Stocks() {
   const [priceLabel, setPriceLabel] = useState('')
 
   async function handleGetPrice() {
-    const symbol = symbolRef.current.value
+    const symbol = symbolRef.current.value.trimStart()
     try {
       const response = await fetch(`${import.meta.env.BASE_URL}api/stock-price?symbol=${encodeURIComponent(symbol)}`)
       const data = await response.json()

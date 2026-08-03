@@ -73,6 +73,19 @@ describe('Stocks', () => {
     expect(await screen.findByText('No Stock Entered')).toBeInTheDocument()
   })
 
+  it('strips leading spaces from the symbol before requesting a price', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ json: () => Promise.resolve({ price: 123.45 }) }),
+    )
+    render(<Stocks />)
+
+    clickGetPrice('   AAPL')
+
+    expect(await screen.findByText('123.45')).toBeInTheDocument()
+    expect(fetch).toHaveBeenCalledWith('/api/stock-price?symbol=AAPL')
+  })
+
   it('updates the label again on a second click', async () => {
     const fetchMock = vi
       .fn()
