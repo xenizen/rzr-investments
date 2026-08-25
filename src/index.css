@@ -197,3 +197,89 @@ h1 {
     flex-direction: column;
   }
 }
+
+.app-content {
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.app-nav {
+  display: inline-flex;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  padding: 4px;
+}
+
+.app-nav-btn {
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-3);
+  background: transparent;
+  border: none;
+  padding: 8px 18px;
+  border-radius: 100px;
+  cursor: pointer;
+  transition: background 0.3s var(--silk), color 0.3s var(--silk);
+}
+
+.app-nav-btn:hover {
+  color: var(--text-1);
+}
+
+.app-nav-btn-active {
+  color: #fff;
+  background: var(--accent);
+}
+
+.insider-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.insider-date-row {
+  display: flex;
+  gap: 10px;
+}
+
+.insider-date-row .stock-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.insider-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.insider-result-item {
+  font-size: 0.875rem;
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+.insider-result-item strong {
+  color: var(--text-1);
+}
+
+@media (max-width: 480px) {
+  .insider-date-row {
+    flex-direction: column;
+  }
+}
