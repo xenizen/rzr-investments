@@ -23,8 +23,13 @@ def stock_price():
 
 @app.route("/api/insider-data")
 def insider_data():
-    symbol = request.args.get("symbol", "")
-    response = jsonify(get_insider_data(symbol))
+    result = get_insider_data(
+        symbol=request.args.get("symbol", ""),
+        name=request.args.get("name", ""),
+        date_from=request.args.get("date_from", ""),
+        date_to=request.args.get("date_to", ""),
+    )
+    response = jsonify(result)
     response.headers["Cache-Control"] = "no-store"
     return response
 
