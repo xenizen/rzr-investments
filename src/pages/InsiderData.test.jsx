@@ -18,6 +18,10 @@ function fillAndSearch({ symbol, name, dateFrom, dateTo } = {}) {
   fireEvent.click(screen.getByRole('button', { name: /search/i }))
 }
 
+function jsonResponse(body) {
+  return { json: () => Promise.resolve(body) }
+}
+
 describe('InsiderData', () => {
   it('renders the symbol, name, and date range inputs', () => {
     render(<InsiderData />)
@@ -66,18 +70,17 @@ describe('InsiderData', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('searches by symbol alone and renders the results', async () => {
+  it('searches by symbol alone and renders the results in a table', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({
-        json: () =>
-          Promise.resolve({
-            results: [{ insider_name: 'Jane Doe', net_change: 10000, issuer: 'BKKT', filing_date: '2026-08-01' }],
-            page: 1,
-            total_count: 1,
-            has_next: false,
-          }),
-      }),
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          results: [{ insider_name: 'Jane Doe', net_change: 10000, issuer: 'BKKT', filing_date: '2026-08-01' }],
+          page: 1,
+          total_count: 1,
+          has_next: false,
+        }),
+      ),
     )
     render(<InsiderData />)
 
@@ -87,10 +90,30 @@ describe('InsiderData', () => {
     expect(fetch).toHaveBeenCalledWith('/api/insider-data?symbol=BKKT')
   })
 
+  it('renders the expected table column headers', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          results: [{ insider_name: 'Jane Doe', net_change: 10000, issuer: 'BKKT', filing_date: '2026-08-01' }],
+          page: 1,
+          total_count: 1,
+          has_next: false,
+        }),
+      ),
+    )
+    render(<InsiderData />)
+
+    fillAndSearch({ symbol: 'BKKT' })
+    await screen.findByTestId('insider-result-row')
+
+    for (const header of ['Insider', 'Shares', 'Issuer', 'Filing Date']) {
+      expect(screen.getByRole('columnheader', { name: header })).toBeInTheDocument()
+    }
+  })
+
   it('combines symbol, name, and date range into the query string', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      json: () => Promise.resolve({ results: [], page: 1, total_count: 0, has_next: false }),
-    })
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ results: [], page: 1, total_count: 0, has_next: false }))
     vi.stubGlobal('fetch', fetchMock)
     render(<InsiderData />)
 
@@ -104,21 +127,20 @@ describe('InsiderData', () => {
   it('shows the backend error message when the search fails', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({ json: () => Promise.resolve({ error: 'No Insider Data Found: Real Stock?' }) }),
+      vi.fn().mockResolvedValue(jsonResponse({ error: 'No Insider Data Found: Real Stock?' })),
     )
     render(<InsiderData />)
 
     fillAndSearch({ symbol: 'ZZZZZ' })
 
     expect(await screen.findByText('No Insider Data Found: Real Stock?')).toBeInTheDocument()
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
   })
 
   it('shows a friendly message when the search succeeds with no matches', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({
-        json: () => Promise.resolve({ results: [], page: 1, total_count: 0, has_next: false }),
-      }),
+      vi.fn().mockResolvedValue(jsonResponse({ results: [], page: 1, total_count: 0, has_next: false })),
     )
     render(<InsiderData />)
 
@@ -134,5 +156,147 @@ describe('InsiderData', () => {
     fillAndSearch({ symbol: 'AAPL' })
 
     expect(await screen.findByText('No Insider Data Found: Real Stock?')).toBeInTheDocument()
+  })
+
+  it('shows a searching indicator and disables Search while the request is in flight', async () => {
+    let resolveFetch
+    const pending = new Promise((resolve) => {
+      resolveFetch = resolve
+    })
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(pending))
+    render(<InsiderData />)
+
+    fillAndSearch({ symbol: 'AAPL' })
+
+    expect(await screen.findByText('Searching…')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /search/i })).toBeDisabled()
+
+    resolveFetch(jsonResponse({ results: [], page: 1, total_count: 0, has_next: false }))
+
+    expect(await screen.findByText('No matching insider filings found.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /search/i })).toBeEnabled()
+  })
+
+  it('shows the Showing X-Y of Z range for the current page', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          results: [{ insider_name: 'Jane Doe', net_change: 100, issuer: 'AAPL', filing_date: '2026-08-10' }],
+          page: 1,
+          total_count: 15,
+          has_next: true,
+        }),
+      ),
+    )
+    render(<InsiderData />)
+
+    fillAndSearch({ symbol: 'AAPL' })
+
+    expect(await screen.findByText('Showing 1–1 of 15')).toBeInTheDocument()
+  })
+
+  it('disables Previous on the first page and enables Next when has_next is true', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          results: [{ insider_name: 'Jane Doe', net_change: 100, issuer: 'AAPL', filing_date: '2026-08-10' }],
+          page: 1,
+          total_count: 15,
+          has_next: true,
+        }),
+      ),
+    )
+    render(<InsiderData />)
+
+    fillAndSearch({ symbol: 'AAPL' })
+    await screen.findByTestId('insider-result-row')
+
+    expect(screen.getByRole('button', { name: /previous/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /^next$/i })).toBeEnabled()
+  })
+
+  it('disables Next when has_next is false', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          results: [{ insider_name: 'Jane Doe', net_change: 100, issuer: 'AAPL', filing_date: '2026-08-10' }],
+          page: 1,
+          total_count: 1,
+          has_next: false,
+        }),
+      ),
+    )
+    render(<InsiderData />)
+
+    fillAndSearch({ symbol: 'AAPL' })
+    await screen.findByTestId('insider-result-row')
+
+    expect(screen.getByRole('button', { name: /^next$/i })).toBeDisabled()
+  })
+
+  it('advances to the next page and back, reusing the searched criteria', async () => {
+    const page1 = {
+      results: [{ insider_name: 'Jane Doe', net_change: 100, issuer: 'AAPL', filing_date: '2026-08-10' }],
+      page: 1,
+      total_count: 15,
+      has_next: true,
+    }
+    const page2 = {
+      results: [{ insider_name: 'John Smith', net_change: 200, issuer: 'AAPL', filing_date: '2026-08-01' }],
+      page: 2,
+      total_count: 15,
+      has_next: false,
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(page1))
+      .mockResolvedValueOnce(jsonResponse(page2))
+      .mockResolvedValueOnce(jsonResponse(page1))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<InsiderData />)
+
+    fillAndSearch({ symbol: 'AAPL' })
+    expect(await screen.findByText('Jane Doe')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+    expect(await screen.findByText('John Smith')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/insider-data?symbol=AAPL&page=2')
+    expect(screen.getByRole('button', { name: /previous/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^next$/i })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: /previous/i }))
+    expect(await screen.findByText('Jane Doe')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/insider-data?symbol=AAPL')
+  })
+
+  it('pages using the criteria from the last search, not the current (edited) input values', async () => {
+    const page1 = {
+      results: [{ insider_name: 'Jane Doe', net_change: 100, issuer: 'AAPL', filing_date: '2026-08-10' }],
+      page: 1,
+      total_count: 15,
+      has_next: true,
+    }
+    const page2 = {
+      results: [{ insider_name: 'John Smith', net_change: 200, issuer: 'AAPL', filing_date: '2026-08-01' }],
+      page: 2,
+      total_count: 15,
+      has_next: false,
+    }
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(page1)).mockResolvedValueOnce(jsonResponse(page2))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<InsiderData />)
+
+    fillAndSearch({ symbol: 'AAPL' })
+    await screen.findByText('Jane Doe')
+
+    // Edit the symbol field without clicking Search again.
+    fillField('txtInsiderSymbol', 'MSFT')
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+
+    await screen.findByText('John Smith')
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/insider-data?symbol=AAPL&page=2')
   })
 })
