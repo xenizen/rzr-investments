@@ -70,13 +70,14 @@ def test_insider_data_route_passes_all_filter_params_through(monkeypatch):
     monkeypatch.setattr(app_module, "get_insider_data", fake_get_insider_data)
     client = app_module.app.test_client()
 
-    client.get("/api/insider-data?symbol=AAPL&name=Jane&date_from=2026-01-01&date_to=2026-02-01")
+    client.get("/api/insider-data?symbol=AAPL&name=Jane&date_from=2026-01-01&date_to=2026-02-01&page=2")
 
     assert captured == {
         "symbol": "AAPL",
         "name": "Jane",
         "date_from": "2026-01-01",
         "date_to": "2026-02-01",
+        "page": "2",
     }
 
 
@@ -93,4 +94,4 @@ def test_insider_data_route_passes_blank_params_through(monkeypatch):
     response = client.get("/api/insider-data")
 
     assert response.get_json() == {"error": "No Stock Entered"}
-    assert captured == {"symbol": "", "name": "", "date_from": "", "date_to": ""}
+    assert captured == {"symbol": "", "name": "", "date_from": "", "date_to": "", "page": 1}

@@ -28,6 +28,7 @@ def insider_data():
         name=request.args.get("name", ""),
         date_from=request.args.get("date_from", ""),
         date_to=request.args.get("date_to", ""),
+        page=request.args.get("page", 1),
     )
     response = jsonify(result)
     response.headers["Cache-Control"] = "no-store"

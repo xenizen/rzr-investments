@@ -10,14 +10,7 @@ NO_CRITERIA_ENTERED = "No Stock Entered"
 NO_INSIDER_DATA_FOUND = "No Insider Data Found: Real Stock?"
 
 FORM_TYPE = "4"
-# Filings examined (and, after the name filter, returned) per request. Keeps
-# latency bounded for broad symbol-less/name-only searches -- without this, a
-# request with no symbol can be scanning hundreds of thousands of SEC-wide
-# filings. A search that would need more than this many candidates to find
-# its matches may come back with fewer results (or none) even though more
-# exist further down the list -- `has_more` in the response tells the caller
-# whether that's the case. Superseded by real pagination in SCRUM-13.
-MAX_RESULTS = 20
+PAGE_SIZE = 10
 
 # SEC requires a real identifying name/email on every request. Set once at
 # import time, same as backend/rzr-get-insider.py -- override via env var so
@@ -55,11 +48,20 @@ def _matches_name(name, insider_name, issuer):
     return name in (insider_name or "").lower() or name in (issuer or "").lower()
 
 
+def _parse_page(page):
+    try:
+        page = int(page)
+    except (TypeError, ValueError):
+        return 1
+    return page if page >= 1 else 1
+
+
 def get_insider_data(
     symbol=None,
     name=None,
     date_from=None,
     date_to=None,
+    page=1,
     company_factory=None,
     global_filings_factory=None,
 ):
@@ -69,14 +71,22 @@ def get_insider_data(
     together -- each provided filter narrows the result set. `name` matches
     if it hits either the insider's name or the issuer/company name.
 
-    Returns {"results": [...], "has_more": bool} on success, or
-    {"error": <message>}. `has_more` means more candidate filings exist
-    beyond the ones examined -- not that they're guaranteed to match `name`.
+    Results are paginated PAGE_SIZE (10) per page, ordered by filing date
+    (most recent first) so pages stay stable across requests. `total_count`
+    is the number of raw Form 4 filings matching symbol/date, counted
+    *before* the `name` filter -- `name` is applied per-page (only the 10
+    filings on the requested page are checked against it), not across the
+    whole set, so a page can come back with fewer than 10 results even when
+    `has_next` is true.
+
+    Returns {"results": [...], "page": int, "total_count": int,
+    "has_next": bool} on success, or {"error": <message>}.
     """
     symbol = (symbol or "").strip().upper()
     name = (name or "").strip()
     date_from = (date_from or "").strip()
     date_to = (date_to or "").strip()
+    page = _parse_page(page)
 
     if not symbol and not name and not date_from and not date_to:
         return {"error": NO_CRITERIA_ENTERED}
@@ -95,12 +105,17 @@ def get_insider_data(
         return {"error": NO_INSIDER_DATA_FOUND}
 
     if not filings:
-        return {"results": [], "has_more": False}
+        return {"results": [], "page": page, "total_count": 0, "has_next": False}
 
-    has_more = len(filings) > MAX_RESULTS
+    ordered = sorted(filings, key=lambda f: f.filing_date, reverse=True)
+    total_count = len(ordered)
+
+    start = (page - 1) * PAGE_SIZE
+    end = start + PAGE_SIZE
+    has_next = end < total_count
 
     results = []
-    for filing in filings[:MAX_RESULTS]:
+    for filing in ordered[start:end]:
         form4 = filing.obj()
         if not form4:
             continue
@@ -116,4 +131,4 @@ def get_insider_data(
             }
         )
 
-    return {"results": results, "has_more": has_more}
+    return {"results": results, "page": page, "total_count": total_count, "has_next": has_next}

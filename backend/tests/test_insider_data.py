@@ -1,11 +1,12 @@
+from datetime import date, timedelta
 from unittest.mock import MagicMock
 
 from edgar.exceptions import CompanyNotFoundError
 
 from insider_data import (
-    MAX_RESULTS,
     NO_CRITERIA_ENTERED,
     NO_INSIDER_DATA_FOUND,
+    PAGE_SIZE,
     get_insider_data,
 )
 
@@ -17,6 +18,15 @@ def _filing(insider_name, net_change, issuer, filing_date):
     filing = MagicMock(filing_date=filing_date)
     filing.obj.return_value = form4
     return filing
+
+
+def _dated_filings(count, start=date(2026, 8, 1)):
+    """count filings, each one day older than the last, oldest first (so
+    callers can assert on the sort reversing them to newest-first)."""
+    return [
+        _filing(f"Insider {i}", i, "AAPL", start - timedelta(days=count - 1 - i))
+        for i in range(count)
+    ]
 
 
 def _company_factory_returning(filings):
@@ -37,7 +47,7 @@ def test_blank_everything_returns_no_criteria_entered():
 
 
 def test_known_symbol_returns_results():
-    filings = [_filing("Jane Doe", 10000, "BKKT", "2026-08-01")]
+    filings = [_filing("Jane Doe", 10000, "BKKT", date(2026, 8, 1))]
     factory = _company_factory_returning(filings)
 
     result = get_insider_data(symbol="bkkt", company_factory=factory)
@@ -51,7 +61,9 @@ def test_known_symbol_returns_results():
                 "filing_date": "2026-08-01",
             }
         ],
-        "has_more": False,
+        "page": 1,
+        "total_count": 1,
+        "has_next": False,
     }
 
 
@@ -60,37 +72,17 @@ def test_symbol_with_no_filings_returns_empty_results():
 
     result = get_insider_data(symbol="ZZZZZ", company_factory=factory)
 
-    assert result == {"results": [], "has_more": False}
+    assert result == {"results": [], "page": 1, "total_count": 0, "has_next": False}
 
 
 def test_filings_without_a_form4_object_are_skipped():
-    empty_filing = MagicMock()
+    empty_filing = MagicMock(filing_date=date(2026, 8, 1))
     empty_filing.obj.return_value = None
     factory = _company_factory_returning([empty_filing])
 
     result = get_insider_data(symbol="AAPL", company_factory=factory)
 
-    assert result == {"results": [], "has_more": False}
-
-
-def test_caps_results_at_max_results_and_flags_has_more():
-    filings = [_filing(f"Insider {i}", i, "AAPL", "2026-08-01") for i in range(MAX_RESULTS + 5)]
-    factory = _company_factory_returning(filings)
-
-    result = get_insider_data(symbol="AAPL", company_factory=factory)
-
-    assert len(result["results"]) == MAX_RESULTS
-    assert result["has_more"] is True
-
-
-def test_exactly_max_results_reports_no_more():
-    filings = [_filing(f"Insider {i}", i, "AAPL", "2026-08-01") for i in range(MAX_RESULTS)]
-    factory = _company_factory_returning(filings)
-
-    result = get_insider_data(symbol="AAPL", company_factory=factory)
-
-    assert len(result["results"]) == MAX_RESULTS
-    assert result["has_more"] is False
+    assert result["results"] == []
 
 
 def test_unknown_symbol_returns_no_insider_data_found():
@@ -104,64 +96,44 @@ def test_unknown_symbol_returns_no_insider_data_found():
 
 def test_name_filters_by_insider_name():
     filings = [
-        _filing("Jane Doe", 100, "BKKT", "2026-08-01"),
-        _filing("John Smith", 200, "BKKT", "2026-08-02"),
+        _filing("Jane Doe", 100, "BKKT", date(2026, 8, 1)),
+        _filing("John Smith", 200, "BKKT", date(2026, 8, 2)),
     ]
     factory = _company_factory_returning(filings)
 
     result = get_insider_data(symbol="BKKT", name="jane", company_factory=factory)
 
-    assert result == {
-        "results": [
-            {"insider_name": "Jane Doe", "net_change": 100, "issuer": "BKKT", "filing_date": "2026-08-01"}
-        ],
-        "has_more": False,
-    }
+    assert [r["insider_name"] for r in result["results"]] == ["Jane Doe"]
 
 
 def test_name_filters_by_issuer_name():
     filings = [
-        _filing("Jane Doe", 100, "Bakkt, Inc. (BKKT)", "2026-08-01"),
-        _filing("John Smith", 200, "Acme Corp (ACME)", "2026-08-02"),
+        _filing("Jane Doe", 100, "Bakkt, Inc. (BKKT)", date(2026, 8, 1)),
+        _filing("John Smith", 200, "Acme Corp (ACME)", date(2026, 8, 2)),
     ]
     factory = _company_factory_returning(filings)
 
     result = get_insider_data(symbol="BKKT", name="bakkt", company_factory=factory)
 
-    assert result == {
-        "results": [
-            {
-                "insider_name": "Jane Doe",
-                "net_change": 100,
-                "issuer": "Bakkt, Inc. (BKKT)",
-                "filing_date": "2026-08-01",
-            }
-        ],
-        "has_more": False,
-    }
+    assert [r["insider_name"] for r in result["results"]] == ["Jane Doe"]
 
 
 def test_symbol_and_name_are_anded():
-    filings = [_filing("Jane Doe", 100, "BKKT", "2026-08-01")]
+    filings = [_filing("Jane Doe", 100, "BKKT", date(2026, 8, 1))]
     factory = _company_factory_returning(filings)
 
     result = get_insider_data(symbol="BKKT", name="nomatch", company_factory=factory)
 
-    assert result == {"results": [], "has_more": False}
+    assert result["results"] == []
 
 
 def test_no_symbol_uses_global_filings_search():
-    filings = [_filing("Jane Doe", 100, "BKKT", "2026-08-01")]
+    filings = [_filing("Jane Doe", 100, "BKKT", date(2026, 8, 1))]
     global_factory = _global_factory_returning(filings)
 
     result = get_insider_data(name="jane", global_filings_factory=global_factory)
 
-    assert result == {
-        "results": [
-            {"insider_name": "Jane Doe", "net_change": 100, "issuer": "BKKT", "filing_date": "2026-08-01"}
-        ],
-        "has_more": False,
-    }
+    assert [r["insider_name"] for r in result["results"]] == ["Jane Doe"]
 
 
 def test_no_symbol_passes_date_range_to_global_factory():
@@ -199,3 +171,61 @@ def test_one_sided_date_to_is_closed_with_start_of_year():
     get_insider_data(date_to="2026-02-01", global_filings_factory=global_factory)
 
     assert captured["filing_date"] == "2026-01-01:2026-02-01"
+
+
+# --- Pagination (SCRUM-13) ---
+
+
+def test_first_page_returns_up_to_page_size_newest_first():
+    filings = _dated_filings(PAGE_SIZE + 5)  # oldest first, as the raw API might return them
+    factory = _company_factory_returning(filings)
+
+    result = get_insider_data(symbol="AAPL", company_factory=factory)
+
+    assert len(result["results"]) == PAGE_SIZE
+    assert result["page"] == 1
+    assert result["total_count"] == PAGE_SIZE + 5
+    assert result["has_next"] is True
+    # Newest (highest index, most recent date) filing comes first.
+    assert result["results"][0]["net_change"] == PAGE_SIZE + 4
+    assert result["results"][-1]["net_change"] == 5
+
+
+def test_second_page_returns_the_next_slice():
+    filings = _dated_filings(PAGE_SIZE + 5)
+    factory = _company_factory_returning(filings)
+
+    result = get_insider_data(symbol="AAPL", page=2, company_factory=factory)
+
+    assert len(result["results"]) == 5
+    assert result["page"] == 2
+    assert result["has_next"] is False
+    assert result["results"][0]["net_change"] == 4
+    assert result["results"][-1]["net_change"] == 0
+
+
+def test_page_past_the_end_returns_empty_results_and_no_next():
+    filings = _dated_filings(3)
+    factory = _company_factory_returning(filings)
+
+    result = get_insider_data(symbol="AAPL", page=5, company_factory=factory)
+
+    assert result["results"] == []
+    assert result["has_next"] is False
+
+
+def test_non_numeric_page_defaults_to_one():
+    filings = _dated_filings(3)
+    factory = _company_factory_returning(filings)
+
+    result = get_insider_data(symbol="AAPL", page="not-a-number", company_factory=factory)
+
+    assert result["page"] == 1
+
+
+def test_zero_or_negative_page_clamps_to_one():
+    filings = _dated_filings(3)
+    factory = _company_factory_returning(filings)
+
+    assert get_insider_data(symbol="AAPL", page=0, company_factory=factory)["page"] == 1
+    assert get_insider_data(symbol="AAPL", page=-2, company_factory=factory)["page"] == 1
