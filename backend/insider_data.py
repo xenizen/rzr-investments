@@ -10,14 +10,14 @@ NO_CRITERIA_ENTERED = "No Stock Entered"
 NO_INSIDER_DATA_FOUND = "No Insider Data Found: Real Stock?"
 
 FORM_TYPE = "4"
+# Filings examined (and, after the name filter, returned) per request. Keeps
+# latency bounded for broad symbol-less/name-only searches -- without this, a
+# request with no symbol can be scanning hundreds of thousands of SEC-wide
+# filings. A search that would need more than this many candidates to find
+# its matches may come back with fewer results (or none) even though more
+# exist further down the list -- `has_more` in the response tells the caller
+# whether that's the case. Superseded by real pagination in SCRUM-13.
 MAX_RESULTS = 20
-# Raw filings examined per request before giving up, regardless of how many
-# match. Keeps latency bounded for broad symbol-less/name-only searches --
-# without this, a request with no symbol can be scanning hundreds of
-# thousands of SEC-wide filings. A search that would need more than this
-# many candidates to find its matches may come back with fewer results (or
-# none) even though more exist further down the list.
-SCAN_LIMIT = 50
 
 # SEC requires a real identifying name/email on every request. Set once at
 # import time, same as backend/rzr-get-insider.py -- override via env var so
@@ -69,7 +69,9 @@ def get_insider_data(
     together -- each provided filter narrows the result set. `name` matches
     if it hits either the insider's name or the issuer/company name.
 
-    Returns {"results": [...]} on success, or {"error": <message>}.
+    Returns {"results": [...], "has_more": bool} on success, or
+    {"error": <message>}. `has_more` means more candidate filings exist
+    beyond the ones examined -- not that they're guaranteed to match `name`.
     """
     symbol = (symbol or "").strip().upper()
     name = (name or "").strip()
@@ -93,12 +95,12 @@ def get_insider_data(
         return {"error": NO_INSIDER_DATA_FOUND}
 
     if not filings:
-        return {"results": []}
+        return {"results": [], "has_more": False}
+
+    has_more = len(filings) > MAX_RESULTS
 
     results = []
-    for filing in filings[:SCAN_LIMIT]:
-        if len(results) >= MAX_RESULTS:
-            break
+    for filing in filings[:MAX_RESULTS]:
         form4 = filing.obj()
         if not form4:
             continue
@@ -114,4 +116,4 @@ def get_insider_data(
             }
         )
 
-    return {"results": results}
+    return {"results": results, "has_more": has_more}

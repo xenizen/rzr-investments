@@ -50,7 +50,8 @@ def test_known_symbol_returns_results():
                 "issuer": "BKKT",
                 "filing_date": "2026-08-01",
             }
-        ]
+        ],
+        "has_more": False,
     }
 
 
@@ -59,7 +60,7 @@ def test_symbol_with_no_filings_returns_empty_results():
 
     result = get_insider_data(symbol="ZZZZZ", company_factory=factory)
 
-    assert result == {"results": []}
+    assert result == {"results": [], "has_more": False}
 
 
 def test_filings_without_a_form4_object_are_skipped():
@@ -69,16 +70,27 @@ def test_filings_without_a_form4_object_are_skipped():
 
     result = get_insider_data(symbol="AAPL", company_factory=factory)
 
-    assert result == {"results": []}
+    assert result == {"results": [], "has_more": False}
 
 
-def test_caps_results_at_max_results():
+def test_caps_results_at_max_results_and_flags_has_more():
     filings = [_filing(f"Insider {i}", i, "AAPL", "2026-08-01") for i in range(MAX_RESULTS + 5)]
     factory = _company_factory_returning(filings)
 
     result = get_insider_data(symbol="AAPL", company_factory=factory)
 
     assert len(result["results"]) == MAX_RESULTS
+    assert result["has_more"] is True
+
+
+def test_exactly_max_results_reports_no_more():
+    filings = [_filing(f"Insider {i}", i, "AAPL", "2026-08-01") for i in range(MAX_RESULTS)]
+    factory = _company_factory_returning(filings)
+
+    result = get_insider_data(symbol="AAPL", company_factory=factory)
+
+    assert len(result["results"]) == MAX_RESULTS
+    assert result["has_more"] is False
 
 
 def test_unknown_symbol_returns_no_insider_data_found():
@@ -102,7 +114,8 @@ def test_name_filters_by_insider_name():
     assert result == {
         "results": [
             {"insider_name": "Jane Doe", "net_change": 100, "issuer": "BKKT", "filing_date": "2026-08-01"}
-        ]
+        ],
+        "has_more": False,
     }
 
 
@@ -123,7 +136,8 @@ def test_name_filters_by_issuer_name():
                 "issuer": "Bakkt, Inc. (BKKT)",
                 "filing_date": "2026-08-01",
             }
-        ]
+        ],
+        "has_more": False,
     }
 
 
@@ -133,7 +147,7 @@ def test_symbol_and_name_are_anded():
 
     result = get_insider_data(symbol="BKKT", name="nomatch", company_factory=factory)
 
-    assert result == {"results": []}
+    assert result == {"results": [], "has_more": False}
 
 
 def test_no_symbol_uses_global_filings_search():
@@ -145,7 +159,8 @@ def test_no_symbol_uses_global_filings_search():
     assert result == {
         "results": [
             {"insider_name": "Jane Doe", "net_change": 100, "issuer": "BKKT", "filing_date": "2026-08-01"}
-        ]
+        ],
+        "has_more": False,
     }
 
 
