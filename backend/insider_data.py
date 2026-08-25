@@ -6,7 +6,7 @@ from edgar import Company, get_filings
 from edgar import set_identity
 from edgar.exceptions import EdgarError
 
-NO_CRITERIA_ENTERED = "No Stock Entered"
+NO_CRITERIA_ENTERED = "No Search Criteria Entered"
 NO_INSIDER_DATA_FOUND = "No Insider Data Found: Real Stock?"
 
 FORM_TYPE = "4"
@@ -116,10 +116,16 @@ def get_insider_data(
 
     results = []
     for filing in ordered[start:end]:
-        form4 = filing.obj()
-        if not form4:
+        try:
+            form4 = filing.obj()
+            if not form4:
+                continue
+            summary = form4.get_ownership_summary()
+        except (EdgarError, httpx.HTTPError, ValueError):
+            # One filing failing to load/parse (a transient SEC hiccup, a
+            # malformed document) shouldn't sink the whole page -- skip it
+            # and keep going.
             continue
-        summary = form4.get_ownership_summary()
         if name and not _matches_name(name, summary.insider_name, summary.issuer):
             continue
         results.append(

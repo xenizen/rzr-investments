@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 from unittest.mock import MagicMock
 
-from edgar.exceptions import CompanyNotFoundError
+from edgar.exceptions import CompanyNotFoundError, ParsingError
 
 from insider_data import (
     NO_CRITERIA_ENTERED,
@@ -85,6 +85,30 @@ def test_filings_without_a_form4_object_are_skipped():
     assert result["results"] == []
 
 
+def test_a_filing_that_fails_to_load_is_skipped_not_fatal():
+    good = _filing("Jane Doe", 100, "AAPL", date(2026, 8, 2))
+    broken = MagicMock(filing_date=date(2026, 8, 1))
+    broken.obj.side_effect = ParsingError("malformed filing")
+    factory = _company_factory_returning([good, broken])
+
+    result = get_insider_data(symbol="AAPL", company_factory=factory)
+
+    assert [r["insider_name"] for r in result["results"]] == ["Jane Doe"]
+
+
+def test_a_filing_whose_summary_fails_to_load_is_skipped_not_fatal():
+    good = _filing("Jane Doe", 100, "AAPL", date(2026, 8, 2))
+    broken_form4 = MagicMock()
+    broken_form4.get_ownership_summary.side_effect = ParsingError("malformed summary")
+    broken = MagicMock(filing_date=date(2026, 8, 1))
+    broken.obj.return_value = broken_form4
+    factory = _company_factory_returning([good, broken])
+
+    result = get_insider_data(symbol="AAPL", company_factory=factory)
+
+    assert [r["insider_name"] for r in result["results"]] == ["Jane Doe"]
+
+
 def test_unknown_symbol_returns_no_insider_data_found():
     def factory(symbol):
         raise CompanyNotFoundError(symbol)
@@ -92,6 +116,17 @@ def test_unknown_symbol_returns_no_insider_data_found():
     result = get_insider_data(symbol="ZZZZZ", company_factory=factory)
 
     assert result == {"error": NO_INSIDER_DATA_FOUND}
+
+
+def test_no_matching_filings_returns_empty_results_not_an_error():
+    # Covers edgartools returning None for a query it can't satisfy (e.g. a
+    # malformed date range) rather than raising -- shouldn't look like a
+    # crash or an error, just "nothing found".
+    factory = _company_factory_returning(None)
+
+    result = get_insider_data(symbol="AAPL", company_factory=factory)
+
+    assert result == {"results": [], "page": 1, "total_count": 0, "has_next": False}
 
 
 def test_name_filters_by_insider_name():
