@@ -2,6 +2,7 @@ import os
 
 from flask import Flask, jsonify, request, send_from_directory
 
+from insider_data import get_insider_data
 from stock_price import get_stock_price
 
 # Populated by deployment: the built React app (npm run build's dist/) gets
@@ -16,6 +17,20 @@ app = Flask(__name__, static_folder=None)
 def stock_price():
     symbol = request.args.get("symbol", "")
     response = jsonify(get_stock_price(symbol))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.route("/api/insider-data")
+def insider_data():
+    result = get_insider_data(
+        symbol=request.args.get("symbol", ""),
+        name=request.args.get("name", ""),
+        date_from=request.args.get("date_from", ""),
+        date_to=request.args.get("date_to", ""),
+        page=request.args.get("page", 1),
+    )
+    response = jsonify(result)
     response.headers["Cache-Control"] = "no-store"
     return response
 
