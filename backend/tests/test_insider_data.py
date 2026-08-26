@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 from edgar.exceptions import CompanyNotFoundError, ParsingError
 
 from insider_data import (
+    NAME_SEARCH_LIMIT,
     NO_CRITERIA_ENTERED,
     NO_INSIDER_DATA_FOUND,
     PAGE_SIZE,
@@ -38,6 +39,30 @@ def _company_factory_returning(filings):
 
 def _global_factory_returning(filings):
     return lambda filing_date: filings
+
+
+def _search_result(insider_name, net_change, issuer, filing_date):
+    """A mock SEC full-text search hit -- get_filing() returns a plain
+    filing mock, same shape _load_filing already knows how to consume."""
+    result = MagicMock()
+    result.get_filing.return_value = _filing(insider_name, net_change, issuer, filing_date)
+    return result
+
+
+def _name_search_factory_returning(total, results, capture=None):
+    """A name_search_factory stand-in. If `capture` (a dict) is given, the
+    exact (name, symbol, date_from, date_to) call args are recorded into it
+    under those keys."""
+    search = MagicMock()
+    search.total = total
+    search.results = results
+
+    def factory(name, symbol, date_from, date_to):
+        if capture is not None:
+            capture.update(name=name, symbol=symbol, date_from=date_from, date_to=date_to)
+        return search
+
+    return factory
 
 
 def test_blank_everything_returns_no_criteria_entered():
@@ -160,45 +185,171 @@ def test_no_matching_filings_returns_empty_results_not_an_error():
 
 
 def test_name_filters_by_insider_name():
-    filings = [
-        _filing("Jane Doe", 100, "BKKT", date(2026, 8, 1)),
-        _filing("John Smith", 200, "BKKT", date(2026, 8, 2)),
+    results = [
+        _search_result("Jane Doe", 100, "BKKT", date(2026, 8, 1)),
+        _search_result("John Smith", 200, "BKKT", date(2026, 8, 2)),
     ]
-    factory = _company_factory_returning(filings)
+    factory = _name_search_factory_returning(2, results)
 
-    result = get_insider_data(symbol="BKKT", name="jane", company_factory=factory)
+    result = get_insider_data(symbol="BKKT", name="jane", name_search_factory=factory)
 
     assert [r["insider_name"] for r in result["results"]] == ["Jane Doe"]
 
 
 def test_name_filters_by_issuer_name():
-    filings = [
-        _filing("Jane Doe", 100, "Bakkt, Inc. (BKKT)", date(2026, 8, 1)),
-        _filing("John Smith", 200, "Acme Corp (ACME)", date(2026, 8, 2)),
+    results = [
+        _search_result("Jane Doe", 100, "Bakkt, Inc. (BKKT)", date(2026, 8, 1)),
+        _search_result("John Smith", 200, "Acme Corp (ACME)", date(2026, 8, 2)),
     ]
-    factory = _company_factory_returning(filings)
+    factory = _name_search_factory_returning(2, results)
 
-    result = get_insider_data(symbol="BKKT", name="bakkt", company_factory=factory)
+    result = get_insider_data(symbol="BKKT", name="bakkt", name_search_factory=factory)
 
     assert [r["insider_name"] for r in result["results"]] == ["Jane Doe"]
 
 
 def test_symbol_and_name_are_anded():
-    filings = [_filing("Jane Doe", 100, "BKKT", date(2026, 8, 1))]
-    factory = _company_factory_returning(filings)
+    results = [_search_result("Jane Doe", 100, "BKKT", date(2026, 8, 1))]
+    factory = _name_search_factory_returning(1, results)
 
-    result = get_insider_data(symbol="BKKT", name="nomatch", company_factory=factory)
+    result = get_insider_data(symbol="BKKT", name="nomatch", name_search_factory=factory)
 
     assert result["results"] == []
 
 
-def test_no_symbol_uses_global_filings_search():
-    filings = [_filing("Jane Doe", 100, "BKKT", date(2026, 8, 1))]
-    global_factory = _global_factory_returning(filings)
+def test_no_symbol_uses_name_search():
+    results = [_search_result("Jane Doe", 100, "BKKT", date(2026, 8, 1))]
+    factory = _name_search_factory_returning(1, results)
 
-    result = get_insider_data(name="jane", global_filings_factory=global_factory)
+    result = get_insider_data(name="jane", name_search_factory=factory)
 
     assert [r["insider_name"] for r in result["results"]] == ["Jane Doe"]
+
+
+def test_name_search_scopes_by_symbol_and_date_range():
+    captured = {}
+    factory = _name_search_factory_returning(0, [], capture=captured)
+
+    get_insider_data(symbol="bkkt", name="Jane", date_from="2026-01-01", date_to="2026-02-01", name_search_factory=factory)
+
+    assert captured == {"name": "Jane", "symbol": "BKKT", "date_from": "2026-01-01", "date_to": "2026-02-01"}
+
+
+def test_name_search_with_no_symbol_passes_none_for_ticker():
+    captured = {}
+    factory = _name_search_factory_returning(0, [], capture=captured)
+
+    get_insider_data(name="Jane", name_search_factory=factory)
+
+    assert captured["symbol"] == ""
+
+
+def test_name_search_zero_matches_returns_empty_results_not_an_error():
+    factory = _name_search_factory_returning(0, [])
+
+    result = get_insider_data(name="nobody matches this", name_search_factory=factory)
+
+    assert result == {"results": [], "page": 1, "page_size": PAGE_SIZE, "total_count": 0, "has_next": False}
+
+
+def test_name_search_factory_error_returns_no_insider_data_found():
+    def factory(name, symbol, date_from, date_to):
+        raise CompanyNotFoundError(symbol)
+
+    result = get_insider_data(name="Jane", name_search_factory=factory)
+
+    assert result == {"error": NO_INSIDER_DATA_FOUND}
+
+
+def test_name_search_total_count_reflects_true_matches_not_a_scan_cap():
+    # The whole point of routing name searches through SEC's full-text
+    # index (SCRUM-19): total_count is a real count of name matches, not an
+    # upper bound on how many raw filings were scanned.
+    results = [_search_result(f"Jane Doe {i}", i, "BKKT", date(2026, 8, 1)) for i in range(3)]
+    factory = _name_search_factory_returning(3, results)
+
+    result = get_insider_data(name="Jane Doe", name_search_factory=factory)
+
+    assert result["total_count"] == 3
+    assert result["has_next"] is False
+
+
+def test_name_search_paginates_locally_over_the_fetched_batch():
+    results = [_search_result(f"Insider {i}", i, "AAPL", date(2026, 8, 1)) for i in range(PAGE_SIZE + 5)]
+    factory = _name_search_factory_returning(PAGE_SIZE + 5, results)
+
+    page1 = get_insider_data(name="Insider", name_search_factory=factory)
+    page2 = get_insider_data(name="Insider", page=2, name_search_factory=factory)
+
+    assert len(page1["results"]) == PAGE_SIZE
+    assert page1["has_next"] is True
+    assert len(page2["results"]) == 5
+    assert page2["has_next"] is False
+
+
+def test_name_search_total_is_capped_at_name_search_limit():
+    factory = _name_search_factory_returning(NAME_SEARCH_LIMIT + 500, [])
+
+    result = get_insider_data(name="Common Name", name_search_factory=factory)
+
+    assert result["total_count"] == NAME_SEARCH_LIMIT
+
+
+def test_name_search_still_applies_local_name_filter_as_a_safety_net():
+    # SEC's full-text search can return a filing that mentions the query
+    # text somewhere without it actually being the insider or issuer name
+    # by our stricter definition -- confirm that's still filtered out
+    # rather than trusted blindly.
+    results = [
+        _search_result("Jane Doe", 100, "BKKT", date(2026, 8, 1)),
+        _search_result("Someone Else", 200, "Unrelated Corp", date(2026, 8, 2)),
+    ]
+    factory = _name_search_factory_returning(2, results)
+
+    result = get_insider_data(name="Jane", name_search_factory=factory)
+
+    assert [r["insider_name"] for r in result["results"]] == ["Jane Doe"]
+
+
+def test_name_search_clamps_a_future_end_date_to_today(monkeypatch):
+    # A future end_date makes SEC's full-text search return zero results
+    # (see _clamp_to_today) -- confirm the default name-search factory
+    # clamps it before it ever reaches search_filings. Uses the real
+    # search_filings dependency (patched) rather than name_search_factory,
+    # since name_search_factory replaces _default_name_search entirely and
+    # would bypass the clamping logic under test.
+    captured = {}
+
+    def fake_search_filings(query, forms, ticker, start_date, end_date, limit):
+        captured["end_date"] = end_date
+        search = MagicMock()
+        search.total = 0
+        search.results = []
+        return search
+
+    monkeypatch.setattr("insider_data.search_filings", fake_search_filings)
+
+    far_future = f"{date.today().year + 10}-01-01"
+    get_insider_data(name="Jane", date_to=far_future)
+
+    assert captured["end_date"] == date.today().isoformat()
+
+
+def test_name_search_leaves_a_past_end_date_alone(monkeypatch):
+    captured = {}
+
+    def fake_search_filings(query, forms, ticker, start_date, end_date, limit):
+        captured["end_date"] = end_date
+        search = MagicMock()
+        search.total = 0
+        search.results = []
+        return search
+
+    monkeypatch.setattr("insider_data.search_filings", fake_search_filings)
+
+    get_insider_data(name="Jane", date_to="2020-06-15")
+
+    assert captured["end_date"] == "2020-06-15"
 
 
 def test_no_symbol_passes_date_range_to_global_factory():

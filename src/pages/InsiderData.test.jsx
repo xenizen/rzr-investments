@@ -336,7 +336,10 @@ describe('InsiderData', () => {
     expect(screen.queryByRole('button', { name: /^next$/i })).not.toBeInTheDocument()
   })
 
-  it('caveats the total when a name filter is active, since it is counted before name filtering', async () => {
+  it('shows a plain total for a name-filtered search too, since the backend now counts true name matches', async () => {
+    // SCRUM-19: name searches go through SEC's full-text search on the
+    // backend, so total_count is a real match count -- no "of up to"
+    // caveat needed any more.
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
@@ -352,12 +355,10 @@ describe('InsiderData', () => {
 
     fillAndSearch({ symbol: 'AAPL', name: 'Jane' })
 
-    expect(
-      await screen.findByText('Showing 1–1 of up to 40 matching symbol/date (name filter applied per page)'),
-    ).toBeInTheDocument()
+    expect(await screen.findByText('Showing 1–1 of 40')).toBeInTheDocument()
   })
 
-  it('does not caveat the total when no name filter is active', async () => {
+  it('shows a plain total when no name filter is active', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(

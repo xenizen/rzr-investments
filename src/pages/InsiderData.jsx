@@ -109,12 +109,11 @@ function InsiderData() {
 
   const rangeStart = results.length ? (page - 1) * pageSize + 1 : 0
   const rangeEnd = rangeStart ? rangeStart + results.length - 1 : 0
-  // total_count is counted before the name filter (applied per-page on the
-  // backend), so when a name filter is active it overstates true matches --
-  // say so rather than implying it's an exact count.
-  const pageInfo = criteria?.name
-    ? `Showing ${rangeStart}–${rangeEnd} of up to ${totalCount} matching symbol/date (name filter applied per page)`
-    : `Showing ${rangeStart}–${rangeEnd} of ${totalCount}`
+  // A name-filtered search is now answered by SEC's own full-text search
+  // (see backend/insider_data.py's _search_by_name), so total_count is a
+  // real count of name matches, not a pre-filter estimate -- no caveat
+  // needed here any more (SCRUM-19).
+  const pageInfo = `Showing ${rangeStart}–${rangeEnd} of ${totalCount}`
 
   return (
     <div id="insider-data" className="stock-card">

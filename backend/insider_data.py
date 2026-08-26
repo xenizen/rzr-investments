@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
 import httpx
-from edgar import Company, get_filings
+from edgar import Company, get_filings, search_filings
 from edgar import set_identity
 from edgar.exceptions import EdgarError
 
@@ -12,20 +12,29 @@ NO_INSIDER_DATA_FOUND = "No Insider Data Found: Real Stock?"
 
 FORM_TYPE = "4"
 PAGE_SIZE = 10
-# Raw filings considered per request, before pagination is applied. Without
-# this, a symbol-less (name/date-only) search hits SEC-wide get_filings()
-# and sorts the entire matching set -- which can be the whole historical
-# Form 4 index -- in memory on every request. Filings come back newest-first
-# from edgartools already; capping to the first SCAN_LIMIT and *then*
-# re-sorting keeps that guarantee explicit without materializing more than
-# this many filing objects. A search that would need to look past this many
-# candidates to find its matches may come back with fewer results (or none)
-# even though more exist further back in SEC's history.
+# Raw filings considered per request for a symbol/date-only search (no name
+# filter), before pagination is applied. Without this, a symbol-less search
+# hits SEC-wide get_filings() and sorts the entire matching set -- which can
+# be the whole historical Form 4 index -- in memory on every request.
+# Filings come back newest-first from edgartools already; capping to the
+# first SCAN_LIMIT and *then* re-sorting keeps that guarantee explicit
+# without materializing more than this many filing objects. A search that
+# would need to look past this many candidates to find its matches may come
+# back with fewer results (or none) even though more exist further back in
+# SEC's history.
 SCAN_LIMIT = 500
+# Cap on how many name/issuer matches to fetch for a `name` search (see
+# _search_by_name). This is SEC EDGAR full-text search's own maximum
+# `limit`, so it isn't a choice we're making -- 100 real matches is already
+# far beyond what SCAN_LIMIT-scanning raw filings could reliably surface
+# (see the SCRUM-19 bug this replaced: an insider whose most recent filing
+# fell outside the most recent SCAN_LIMIT SEC-wide filings was unreachable
+# by name search at all).
+NAME_SEARCH_LIMIT = 100
 # One page's worth of filing detail fetches run concurrently when the host
 # allows it (see _load_filings) -- a pool the size of a page is enough to
 # keep every fetch in flight at once without unbounded thread growth on a
-# bigger SCAN_LIMIT.
+# bigger SCAN_LIMIT/NAME_SEARCH_LIMIT.
 MAX_WORKERS = PAGE_SIZE
 
 # Exceptions that mean "this filing/query didn't work out" rather than a bug
@@ -50,13 +59,37 @@ def _default_global_filings(filing_date):
     return get_filings(form=FORM_TYPE, filing_date=filing_date)
 
 
+def _default_name_search(name, symbol, date_from, date_to):
+    return search_filings(
+        query=name,
+        forms=FORM_TYPE,
+        ticker=symbol or None,
+        start_date=date_from or None,
+        end_date=_clamp_to_today(date_to) or None,
+        limit=NAME_SEARCH_LIMIT,
+    )
+
+
+def _clamp_to_today(date_to):
+    """A future end_date makes SEC's full-text search return zero results
+    (observed directly, not documented -- SEC's index simply has nothing
+    past today, and the query doesn't clamp itself). Cap it here so a date
+    picker that lets a user pick a future date can't silently zero out
+    their search."""
+    if date_to and date_to > date.today().isoformat():
+        return date.today().isoformat()
+    return date_to
+
+
 def _filing_date_range(date_from, date_to):
-    """Build a closed filing_date range string for edgartools.
+    """Build a closed filing_date range string for edgartools.get_filings().
 
     A one-sided range makes edgartools scan far more of the SEC index than
     intended (it can't narrow to a specific quarter), so the missing side is
     always filled in: a missing date_to defaults to today, a missing
-    date_from defaults to the start of date_to's calendar year.
+    date_from defaults to the start of date_to's calendar year. Only used
+    for the no-`name` path (see get_insider_data) -- search_filings takes
+    start_date/end_date directly and doesn't have this quirk.
     """
     if date_from and date_to:
         return f"{date_from}:{date_to}"
@@ -102,8 +135,23 @@ def _load_filing(filing):
         return None
 
 
-def _load_filings(filings):
-    """Load a page's worth of filings, in parallel when the host allows it.
+def _load_search_result(result):
+    """Resolve one SEC full-text search hit down to a (filing, summary) pair.
+
+    Same contract as _load_filing -- returns None on any failure, including
+    the extra get_filing() network call a search result needs before it can
+    be treated like a plain Filing.
+    """
+    try:
+        filing = result.get_filing()
+    except FILING_ERRORS:
+        return None
+    return _load_filing(filing)
+
+
+def _load_filings(items, loader=_load_filing):
+    """Load a page's worth of filings/search results, in parallel when the
+    host allows it.
 
     Some shared hosts (e.g. CloudLinux CageFS-limited accounts) cap the
     account's process/thread count tightly enough that even one extra OS
@@ -113,11 +161,68 @@ def _load_filings(filings):
     """
     executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
     try:
-        return list(executor.map(_load_filing, filings))
+        return list(executor.map(loader, items))
     except RuntimeError:
-        return [_load_filing(filing) for filing in filings]
+        return [loader(item) for item in items]
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _build_results(loaded, name):
+    results = []
+    for item in loaded:
+        if item is None:
+            continue
+        filing, summary = item
+        if name and not _matches_name(name, summary.insider_name, summary.issuer):
+            continue
+        results.append(
+            {
+                "insider_name": summary.insider_name,
+                "net_change": summary.net_change,
+                "issuer": summary.issuer,
+                "filing_date": str(filing.filing_date),
+            }
+        )
+    return results
+
+
+def _search_by_name(symbol, name, date_from, date_to, page, name_search_factory):
+    """Search by insider/issuer name via SEC EDGAR's full-text search.
+
+    Unlike the raw-filings path below, this searches SEC's own server-side
+    index of filing content -- not a locally-scanned, latency-bounded
+    window of raw filings -- so `total_count` here is a real count of
+    filings actually matching `name` (up to NAME_SEARCH_LIMIT), not an
+    upper bound that predates the name filter. `name` can still land a
+    result that only loosely matches SEC's full-text index but not our own
+    stricter insider-name-or-issuer check, so _build_results still applies
+    that filter as a final pass.
+    """
+    factory = name_search_factory or _default_name_search
+    try:
+        search = factory(name, symbol, date_from, date_to)
+    except FILING_ERRORS:
+        return {"error": NO_INSIDER_DATA_FOUND}
+
+    total_count = min(search.total, NAME_SEARCH_LIMIT) if search else 0
+    if not total_count:
+        return {"results": [], "page": page, "page_size": PAGE_SIZE, "total_count": 0, "has_next": False}
+
+    matches = list(search.results)[:NAME_SEARCH_LIMIT]
+    start = (page - 1) * PAGE_SIZE
+    end = start + PAGE_SIZE
+    has_next = end < total_count
+
+    loaded = _load_filings(matches[start:end], loader=_load_search_result)
+
+    return {
+        "results": _build_results(loaded, name),
+        "page": page,
+        "page_size": PAGE_SIZE,
+        "total_count": total_count,
+        "has_next": has_next,
+    }
 
 
 def get_insider_data(
@@ -128,6 +233,7 @@ def get_insider_data(
     page=1,
     company_factory=None,
     global_filings_factory=None,
+    name_search_factory=None,
 ):
     """Look up recent Form 4 insider trading activity from SEC EDGAR.
 
@@ -135,16 +241,17 @@ def get_insider_data(
     together -- each provided filter narrows the result set. `name` matches
     if it hits either the insider's name or the issuer/company name.
 
-    Results are paginated PAGE_SIZE (10) per page, ordered by filing date
-    (most recent first) so pages stay stable across requests, out of at most
-    SCAN_LIMIT raw filings considered (see that constant). `total_count` is
-    the number of raw Form 4 filings considered (matching symbol/date and
-    capped at SCAN_LIMIT), counted *before* the `name` filter -- `name` is
-    applied per-page (only the filings on the requested page are checked
-    against it), not across the whole set, so a page can come back with
-    fewer than PAGE_SIZE results, or even zero, even when `has_next` is
-    true. Callers that show `total_count` to a user should caveat it when a
-    `name` filter is active, since it doesn't reflect name matches.
+    When `name` is given, the search runs through SEC EDGAR's full-text
+    search index (scoped by `symbol`/date range if also given), since the
+    insider's name generally isn't in the raw filing metadata edgartools
+    exposes -- only in each filing's content. This also means `total_count`
+    is an accurate count of name matches (capped at NAME_SEARCH_LIMIT), not
+    an upper bound that predates filtering.
+
+    Without `name`, results come from the raw filings list for the given
+    symbol/date range (or SEC-wide, if neither is given), paginated
+    PAGE_SIZE (10) per page and ordered by filing date (most recent first)
+    out of at most SCAN_LIMIT raw filings considered (see that constant).
 
     Returns {"results": [...], "page": int, "page_size": int,
     "total_count": int, "has_next": bool} on success, or
@@ -158,6 +265,9 @@ def get_insider_data(
 
     if not symbol and not name and not date_from and not date_to:
         return {"error": NO_CRITERIA_ENTERED}
+
+    if name:
+        return _search_by_name(symbol, name, date_from, date_to, page, name_search_factory)
 
     filing_date = _filing_date_range(date_from, date_to)
 
@@ -184,24 +294,8 @@ def get_insider_data(
 
     loaded = _load_filings(ordered[start:end])
 
-    results = []
-    for item in loaded:
-        if item is None:
-            continue
-        filing, summary = item
-        if name and not _matches_name(name, summary.insider_name, summary.issuer):
-            continue
-        results.append(
-            {
-                "insider_name": summary.insider_name,
-                "net_change": summary.net_change,
-                "issuer": summary.issuer,
-                "filing_date": str(filing.filing_date),
-            }
-        )
-
     return {
-        "results": results,
+        "results": _build_results(loaded, None),
         "page": page,
         "page_size": PAGE_SIZE,
         "total_count": total_count,

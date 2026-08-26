@@ -191,4 +191,21 @@ test.describe('Insider Data', () => {
     await expect(page.getByRole('button', { name: /^search$/i })).toBeEnabled({ timeout: 50_000 })
     await expect(page.locator('#lblInsiderMessage')).not.toHaveText('Searching…')
   })
+
+  test('a real insider-name-only search finds a real match (SCRUM-19 regression)', async ({ page }) => {
+    // SCRUM-19: name-only search returned nothing for a real insider whose
+    // most recent filing existed but fell outside the client-side scan
+    // window used at the time -- the fix routes name searches through
+    // SEC's own full-text search index instead. Uses a real, durable
+    // Microsoft insider name against the live backend (not mocked) so a
+    // regression to the old client-side-scan behavior would fail this.
+    test.setTimeout(60_000)
+
+    await gotoInsiderData(page)
+    await page.locator('#txtInsiderName').fill('Satya Nadella')
+    await page.getByRole('button', { name: /^search$/i }).click()
+
+    await expect(page.locator('#insiderResultsTable')).toBeVisible({ timeout: 50_000 })
+    await expect(page.getByTestId('insider-result-row').first()).toContainText('Satya Nadella')
+  })
 })
