@@ -4,6 +4,10 @@ const NO_CRITERIA_ENTERED_MESSAGE = 'No Search Criteria Entered'
 const NO_RESULTS_MESSAGE = 'No matching insider filings found.'
 const REQUEST_FAILED_MESSAGE = 'No Insider Data Found: Real Stock?'
 const SEARCHING_MESSAGE = 'Searching…'
+// Matches the backend's insider_data.PAGE_SIZE default -- overridden as
+// soon as a real response arrives with its own page_size, so this is only
+// ever used before the first successful search.
+const DEFAULT_PAGE_SIZE = 10
 
 function buildQuery({ symbol, name, dateFrom, dateTo, page }) {
   const params = new URLSearchParams()
@@ -26,11 +30,27 @@ function InsiderData() {
   // the user has since edited the fields without clicking Search again.
   const [criteria, setCriteria] = useState(null)
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [totalCount, setTotalCount] = useState(0)
   const [hasNext, setHasNext] = useState(false)
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [results, setResults] = useState([])
+  // True only after a *successful* (non-error) search response. Pagination
+  // controls key off this, not off results.length -- the name filter is
+  // applied per-page on the backend, so a legitimately in-range page can
+  // come back with zero rows while more pages still exist. Gating on
+  // results.length alone would hide Previous/Next exactly when they're
+  // needed to get off that empty page.
+  const [searched, setSearched] = useState(false)
+
+  function resetResults(msg) {
+    setResults([])
+    setMessage(msg)
+    setHasNext(false)
+    setTotalCount(0)
+    setSearched(false)
+  }
 
   async function runSearch(searchCriteria, targetPage) {
     setLoading(true)
@@ -40,10 +60,7 @@ function InsiderData() {
       const data = await response.json()
 
       if (data.error) {
-        setResults([])
-        setMessage(data.error)
-        setHasNext(false)
-        setTotalCount(0)
+        resetResults(data.error)
         return
       }
 
@@ -51,13 +68,12 @@ function InsiderData() {
       setResults(found)
       setMessage(found.length ? '' : NO_RESULTS_MESSAGE)
       setPage(data.page ?? targetPage)
+      setPageSize(data.page_size ?? DEFAULT_PAGE_SIZE)
       setTotalCount(data.total_count ?? 0)
       setHasNext(Boolean(data.has_next))
+      setSearched(true)
     } catch {
-      setResults([])
-      setMessage(REQUEST_FAILED_MESSAGE)
-      setHasNext(false)
-      setTotalCount(0)
+      resetResults(REQUEST_FAILED_MESSAGE)
     } finally {
       setLoading(false)
     }
@@ -71,11 +87,8 @@ function InsiderData() {
 
     if (!symbol && !name && !dateFrom && !dateTo) {
       setCriteria(null)
-      setResults([])
-      setMessage(NO_CRITERIA_ENTERED_MESSAGE)
-      setHasNext(false)
-      setTotalCount(0)
       setPage(1)
+      resetResults(NO_CRITERIA_ENTERED_MESSAGE)
       return
     }
 
@@ -94,8 +107,14 @@ function InsiderData() {
     runSearch(criteria, page + 1)
   }
 
-  const rangeStart = results.length ? (page - 1) * 10 + 1 : 0
+  const rangeStart = results.length ? (page - 1) * pageSize + 1 : 0
   const rangeEnd = rangeStart ? rangeStart + results.length - 1 : 0
+  // total_count is counted before the name filter (applied per-page on the
+  // backend), so when a name filter is active it overstates true matches --
+  // say so rather than implying it's an exact count.
+  const pageInfo = criteria?.name
+    ? `Showing ${rangeStart}–${rangeEnd} of up to ${totalCount} matching symbol/date (name filter applied per page)`
+    : `Showing ${rangeStart}–${rangeEnd} of ${totalCount}`
 
   return (
     <div id="insider-data" className="stock-card">
@@ -154,53 +173,53 @@ function InsiderData() {
         {loading ? SEARCHING_MESSAGE : message}
       </label>
       {results.length > 0 && (
-        <>
-          <div className="insider-table-wrap">
-            <table id="insiderResultsTable" className="insider-table">
-              <thead>
-                <tr>
-                  <th scope="col">Insider</th>
-                  <th scope="col">Shares</th>
-                  <th scope="col">Issuer</th>
-                  <th scope="col">Filing Date</th>
+        <div className="insider-table-wrap">
+          <table id="insiderResultsTable" className="insider-table">
+            <thead>
+              <tr>
+                <th scope="col">Insider</th>
+                <th scope="col">Shares</th>
+                <th scope="col">Issuer</th>
+                <th scope="col">Filing Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {results.map((result, index) => (
+                <tr key={index} data-testid="insider-result-row">
+                  <td>{result.insider_name}</td>
+                  <td>{(result.net_change ?? 0).toLocaleString()}</td>
+                  <td>{result.issuer}</td>
+                  <td>{result.filing_date}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {results.map((result, index) => (
-                  <tr key={index} data-testid="insider-result-row">
-                    <td>{result.insider_name}</td>
-                    <td>{(result.net_change ?? 0).toLocaleString()}</td>
-                    <td>{result.issuer}</td>
-                    <td>{result.filing_date}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div id="insiderPagination" className="insider-pagination">
-            <button
-              type="button"
-              id="btnPrevPage"
-              onClick={handlePrevPage}
-              disabled={loading || page <= 1}
-              className="insider-page-btn"
-            >
-              Previous
-            </button>
-            <span id="lblInsiderPageInfo" className="insider-page-info">
-              Showing {rangeStart}–{rangeEnd} of {totalCount}
-            </span>
-            <button
-              type="button"
-              id="btnNextPage"
-              onClick={handleNextPage}
-              disabled={loading || !hasNext}
-              className="insider-page-btn"
-            >
-              Next
-            </button>
-          </div>
-        </>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {searched && (
+        <div id="insiderPagination" className="insider-pagination">
+          <button
+            type="button"
+            id="btnPrevPage"
+            onClick={handlePrevPage}
+            disabled={loading || page <= 1}
+            className="insider-page-btn"
+          >
+            Previous
+          </button>
+          <span id="lblInsiderPageInfo" className="insider-page-info">
+            {pageInfo}
+          </span>
+          <button
+            type="button"
+            id="btnNextPage"
+            onClick={handleNextPage}
+            disabled={loading || !hasNext}
+            className="insider-page-btn"
+          >
+            Next
+          </button>
+        </div>
       )}
     </div>
   )

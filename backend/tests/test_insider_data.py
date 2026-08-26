@@ -7,6 +7,7 @@ from insider_data import (
     NO_CRITERIA_ENTERED,
     NO_INSIDER_DATA_FOUND,
     PAGE_SIZE,
+    SCAN_LIMIT,
     get_insider_data,
 )
 
@@ -62,6 +63,7 @@ def test_known_symbol_returns_results():
             }
         ],
         "page": 1,
+        "page_size": PAGE_SIZE,
         "total_count": 1,
         "has_next": False,
     }
@@ -72,7 +74,13 @@ def test_symbol_with_no_filings_returns_empty_results():
 
     result = get_insider_data(symbol="ZZZZZ", company_factory=factory)
 
-    assert result == {"results": [], "page": 1, "total_count": 0, "has_next": False}
+    assert result == {
+        "results": [],
+        "page": 1,
+        "page_size": PAGE_SIZE,
+        "total_count": 0,
+        "has_next": False,
+    }
 
 
 def test_filings_without_a_form4_object_are_skipped():
@@ -109,6 +117,22 @@ def test_a_filing_whose_summary_fails_to_load_is_skipped_not_fatal():
     assert [r["insider_name"] for r in result["results"]] == ["Jane Doe"]
 
 
+def test_a_filing_with_malformed_ownership_xml_is_skipped_not_fatal():
+    # get_ownership_summary() indexes into the reportingOwner list with no
+    # emptiness check, so a filing with no <reportingOwner> element raises a
+    # plain IndexError -- confirm that's caught same as any other bad filing.
+    good = _filing("Jane Doe", 100, "AAPL", date(2026, 8, 2))
+    broken_form4 = MagicMock()
+    broken_form4.get_ownership_summary.side_effect = IndexError("list index out of range")
+    broken = MagicMock(filing_date=date(2026, 8, 1))
+    broken.obj.return_value = broken_form4
+    factory = _company_factory_returning([good, broken])
+
+    result = get_insider_data(symbol="AAPL", company_factory=factory)
+
+    assert [r["insider_name"] for r in result["results"]] == ["Jane Doe"]
+
+
 def test_unknown_symbol_returns_no_insider_data_found():
     def factory(symbol):
         raise CompanyNotFoundError(symbol)
@@ -126,7 +150,13 @@ def test_no_matching_filings_returns_empty_results_not_an_error():
 
     result = get_insider_data(symbol="AAPL", company_factory=factory)
 
-    assert result == {"results": [], "page": 1, "total_count": 0, "has_next": False}
+    assert result == {
+        "results": [],
+        "page": 1,
+        "page_size": PAGE_SIZE,
+        "total_count": 0,
+        "has_next": False,
+    }
 
 
 def test_name_filters_by_insider_name():
@@ -219,6 +249,7 @@ def test_first_page_returns_up_to_page_size_newest_first():
 
     assert len(result["results"]) == PAGE_SIZE
     assert result["page"] == 1
+    assert result["page_size"] == PAGE_SIZE
     assert result["total_count"] == PAGE_SIZE + 5
     assert result["has_next"] is True
     # Newest (highest index, most recent date) filing comes first.
@@ -264,3 +295,29 @@ def test_zero_or_negative_page_clamps_to_one():
 
     assert get_insider_data(symbol="AAPL", page=0, company_factory=factory)["page"] == 1
     assert get_insider_data(symbol="AAPL", page=-2, company_factory=factory)["page"] == 1
+
+
+# --- Scan cap (post-review hardening) ---
+
+
+def test_scan_limit_caps_how_many_raw_filings_are_considered():
+    # More raw filings than SCAN_LIMIT are available (e.g. a broad,
+    # symbol-less search); total_count and pagination should be bounded by
+    # SCAN_LIMIT rather than reflecting the full underlying set.
+    filings = _dated_filings(SCAN_LIMIT + 50)
+    factory = _company_factory_returning(filings)
+
+    result = get_insider_data(symbol="AAPL", company_factory=factory)
+
+    assert result["total_count"] == SCAN_LIMIT
+
+
+def test_last_page_within_scan_limit_has_no_next():
+    filings = _dated_filings(SCAN_LIMIT + 50)
+    factory = _company_factory_returning(filings)
+    last_page = SCAN_LIMIT // PAGE_SIZE
+
+    result = get_insider_data(symbol="AAPL", page=last_page, company_factory=factory)
+
+    assert result["has_next"] is False
+    assert len(result["results"]) == PAGE_SIZE
