@@ -22,9 +22,10 @@ PAGE_SIZE = 10
 # candidates to find its matches may come back with fewer results (or none)
 # even though more exist further back in SEC's history.
 SCAN_LIMIT = 500
-# One page's worth of filing detail fetches run concurrently (see
-# _load_filing) -- a pool the size of a page is enough to keep every fetch
-# in flight at once without unbounded thread growth on a bigger SCAN_LIMIT.
+# One page's worth of filing detail fetches run concurrently when the host
+# allows it (see _load_filings) -- a pool the size of a page is enough to
+# keep every fetch in flight at once without unbounded thread growth on a
+# bigger SCAN_LIMIT.
 MAX_WORKERS = PAGE_SIZE
 
 # Exceptions that mean "this filing/query didn't work out" rather than a bug
@@ -83,11 +84,11 @@ def _load_filing(filing):
     """Fetch and parse one filing's ownership summary.
 
     Returns (filing, summary) on success, or None if the filing has no
-    parseable Form 4 content or fails to load. Runs on a worker thread (see
-    the ThreadPoolExecutor in get_insider_data) since it's the network I/O
+    parseable Form 4 content or fails to load. It's the network I/O here
     that dominates a page's latency -- fetching a page's filings serially
     can take several seconds since edgartools doesn't cache filing content
-    across distinct Filing instances.
+    across distinct Filing instances (see _load_filings, which runs this
+    concurrently when the host allows it).
     """
     try:
         form4 = filing.obj()
@@ -99,6 +100,24 @@ def _load_filing(filing):
         # malformed document) shouldn't sink the whole page -- skip it and
         # keep going.
         return None
+
+
+def _load_filings(filings):
+    """Load a page's worth of filings, in parallel when the host allows it.
+
+    Some shared hosts (e.g. CloudLinux CageFS-limited accounts) cap the
+    account's process/thread count tightly enough that even one extra OS
+    thread fails to start (a plain RuntimeError from the thread pool, not
+    one of FILING_ERRORS) -- fall back to sequential loading rather than
+    fail the whole page when that happens.
+    """
+    executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+    try:
+        return list(executor.map(_load_filing, filings))
+    except RuntimeError:
+        return [_load_filing(filing) for filing in filings]
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def get_insider_data(
@@ -163,8 +182,7 @@ def get_insider_data(
     end = start + PAGE_SIZE
     has_next = end < total_count
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        loaded = executor.map(_load_filing, ordered[start:end])
+    loaded = _load_filings(ordered[start:end])
 
     results = []
     for item in loaded:

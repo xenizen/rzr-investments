@@ -1,5 +1,5 @@
 from datetime import date, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from edgar.exceptions import CompanyNotFoundError, ParsingError
 
@@ -321,3 +321,21 @@ def test_last_page_within_scan_limit_has_no_next():
 
     assert result["has_next"] is False
     assert len(result["results"]) == PAGE_SIZE
+
+
+def test_falls_back_to_sequential_loading_when_threads_are_unavailable():
+    # Some shared hosts (CloudLinux CageFS-limited accounts) reject even one
+    # extra OS thread with a plain RuntimeError -- confirm that degrades to
+    # sequential loading instead of failing the whole request.
+    filings = _dated_filings(3)
+    factory = _company_factory_returning(filings)
+
+    with patch("insider_data.ThreadPoolExecutor") as mock_executor_cls:
+        mock_executor = MagicMock()
+        mock_executor.map.side_effect = RuntimeError("can't start new thread")
+        mock_executor_cls.return_value = mock_executor
+
+        result = get_insider_data(symbol="AAPL", company_factory=factory)
+
+    assert len(result["results"]) == 3
+    assert [r["insider_name"] for r in result["results"]] == ["Insider 2", "Insider 1", "Insider 0"]
