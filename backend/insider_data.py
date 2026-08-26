@@ -36,8 +36,8 @@ MAX_WORKERS = PAGE_SIZE
 FILING_ERRORS = (EdgarError, httpx.HTTPError, ValueError, IndexError)
 
 # SEC requires a real identifying name/email on every request. Set once at
-# import time, same as backend/rzr-get-insider.py -- override via env var so
-# this isn't hardcoded to one person's identity.
+# import time -- override via env var so this isn't hardcoded to one
+# person's identity.
 set_identity(os.environ.get("EDGAR_IDENTITY", "enochmgmt.com enzork@gmail.com"))
 
 
