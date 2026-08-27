@@ -16,6 +16,7 @@ account.
 """
 
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 from alpaca.common.exceptions import APIError
@@ -26,6 +27,13 @@ from alpaca.trading.client import TradingClient
 
 # Not configurable on purpose -- see the module docstring.
 ALPACA_PAPER = True
+
+# Form 4 issuer tickers include things Alpaca's US-equity market data can't
+# price -- foreign listings with digits ("AXIA3"), units, warrants. Alpaca
+# 400s the *entire batch* on one bad symbol, so screen them out up front:
+# 1-5 letters, optionally a "." class suffix (BRK.A). Anything that slips
+# through is caught by the per-symbol fallback in _resilient_lookup.
+_US_EQUITY_SYMBOL = re.compile(r"^[A-Z]{1,5}(\.[A-Z]{1,2})?$")
 
 # 52-week-high inputs. We ask for a little over 52 weeks of daily bars (the
 # few extra days at the far end don't matter for a "high") and require a
@@ -98,45 +106,50 @@ def get_latest_prices(symbols, client=None):
     """Latest trade price for each of ``symbols`` -- a batched ``get_latest_price``.
 
     Returns ``{symbol: price}``, omitting any symbol Alpaca had no priceable
-    trade for. Unlike the single-symbol helper this does not swallow API
-    errors: a failed batch call (rate limit, auth) propagates so the caller
-    can surface it (SCRUM-36).
+    trade for. A rate-limit / auth failure propagates so the caller can
+    surface it (SCRUM-36); a single un-priceable symbol does not (see
+    ``_resilient_lookup``).
     """
     symbols = _clean_symbols(symbols)
     if not symbols:
         return {}
     client = client or market_data_client()
-    trades = client.get_stock_latest_trade(StockLatestTradeRequest(symbol_or_symbols=symbols))
-    prices = {}
-    for symbol in symbols:
-        trade = trades.get(symbol) if trades else None
-        if trade is not None and trade.price is not None:
-            prices[symbol] = trade.price
-    return prices
+
+    def fetch(batch):
+        return client.get_stock_latest_trade(StockLatestTradeRequest(symbol_or_symbols=batch))
+
+    trades = _resilient_lookup(fetch, symbols)
+    return {
+        symbol: trade.price
+        for symbol, trade in trades.items()
+        if trade is not None and trade.price is not None
+    }
 
 
 def get_52_week_highs(symbols, client=None):
     """52-week high for each of ``symbols``, from ~1 year of daily bars.
 
     Returns ``{symbol: high}``, omitting any symbol with no bars or fewer
-    than ``MIN_BARS_FOR_52W_HIGH`` (treated as insufficient history). A
-    failed batch call propagates (see ``get_latest_prices``).
+    than ``MIN_BARS_FOR_52W_HIGH`` (treated as insufficient history). Same
+    error handling as ``get_latest_prices``.
     """
     symbols = _clean_symbols(symbols)
     if not symbols:
         return {}
     client = client or market_data_client()
-    request = StockBarsRequest(
-        symbol_or_symbols=symbols,
-        timeframe=TimeFrame.Day,
-        start=datetime.now(timezone.utc) - BARS_LOOKBACK,
-    )
-    bars = client.get_stock_bars(request)
-    data = getattr(bars, "data", None) or {}
+    start = datetime.now(timezone.utc) - BARS_LOOKBACK
+
+    def fetch(batch):
+        bars = client.get_stock_bars(
+            StockBarsRequest(symbol_or_symbols=batch, timeframe=TimeFrame.Day, start=start)
+        )
+        return getattr(bars, "data", None) or {}
+
+    data = _resilient_lookup(fetch, symbols)
 
     highs = {}
-    for symbol in symbols:
-        symbol_bars = data.get(symbol) or []
+    for symbol, symbol_bars in data.items():
+        symbol_bars = symbol_bars or []
         if len(symbol_bars) < MIN_BARS_FOR_52W_HIGH:
             continue
         valid = [bar.high for bar in symbol_bars if bar.high is not None]
@@ -149,9 +162,33 @@ def _clean_symbols(symbols):
     seen = []
     for symbol in symbols or []:
         symbol = (symbol or "").strip().upper()
-        if symbol and symbol not in seen:
+        if symbol and _US_EQUITY_SYMBOL.match(symbol) and symbol not in seen:
             seen.append(symbol)
     return seen
+
+
+def _resilient_lookup(fetch, symbols):
+    """``fetch(symbols) -> {symbol: value}``, tolerating one bad symbol.
+
+    Alpaca rejects an entire batch with HTTP 400 if any symbol in it is
+    invalid (a foreign listing, a delisted issuer). On a 400, retry
+    symbol-by-symbol and keep whatever resolves, so one junk ticker doesn't
+    blank out a whole page of candidates. Any other error (429 rate limit,
+    401 auth) propagates.
+    """
+    try:
+        return dict(fetch(symbols))
+    except APIError as exc:
+        if exc.status_code != 400:
+            raise
+
+    resolved = {}
+    for symbol in symbols:
+        try:
+            resolved.update(fetch([symbol]))
+        except APIError:
+            continue
+    return resolved
 
 
 def get_account_context(client=None):

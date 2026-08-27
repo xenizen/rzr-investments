@@ -7,6 +7,7 @@ import alpaca_client
 from alpaca_client import (
     MIN_BARS_FOR_52W_HIGH,
     AlpacaConfigError,
+    _clean_symbols,
     get_52_week_highs,
     get_account_context,
     get_latest_price,
@@ -14,6 +15,12 @@ from alpaca_client import (
     market_data_client,
     trading_client,
 )
+
+
+def _api_error(status_code):
+    http_error = MagicMock()
+    http_error.response.status_code = status_code
+    return APIError('{"message":"invalid symbol: XXX"}', http_error)
 
 
 @pytest.fixture(autouse=True)
@@ -112,11 +119,56 @@ def test_get_latest_prices_empty_input_makes_no_call():
     client.get_stock_latest_trade.assert_not_called()
 
 
-def test_get_latest_prices_propagates_api_error():
+def test_get_latest_prices_propagates_non_400_api_error():
+    # 429 rate limit / 401 auth must surface, not be silently swallowed.
     client = MagicMock()
-    client.get_stock_latest_trade.side_effect = APIError("rate limited")
+    client.get_stock_latest_trade.side_effect = _api_error(429)
     with pytest.raises(APIError):
         get_latest_prices(["AAPL"], client=client)
+
+
+def test_get_latest_prices_falls_back_to_per_symbol_on_batch_400():
+    # One bad symbol 400s the whole batch; retry symbol-by-symbol and keep
+    # what resolves.
+    client = MagicMock()
+
+    def per_call(request):
+        symbols = request.symbol_or_symbols
+        if symbols == ["AAPL", "MSFT"]:
+            raise _api_error(400)
+        if symbols == ["AAPL"]:
+            return {"AAPL": MagicMock(price=100.0)}
+        raise _api_error(400)  # MSFT is the bad one
+
+    client.get_stock_latest_trade.side_effect = per_call
+
+    assert get_latest_prices(["AAPL", "MSFT"], client=client) == {"AAPL": 100.0}
+
+
+def test_invalid_symbols_are_filtered_before_the_request():
+    client = MagicMock()
+    client.get_stock_latest_trade.return_value = {"AAPL": MagicMock(price=100.0)}
+
+    get_latest_prices(["AAPL", "AXIA3", "BRK.A", "TOO.LONG.SYM", ""], client=client)
+
+    assert client.get_stock_latest_trade.call_args.args[0].symbol_or_symbols == ["AAPL", "BRK.A"]
+
+
+@pytest.mark.parametrize(
+    "symbol, kept",
+    [
+        ("AAPL", True),
+        ("aapl", True),
+        ("BRK.A", True),
+        ("AXIA3", False),
+        ("SPY5", False),
+        ("TOOLONG", False),
+        ("A-B", False),
+        ("", False),
+    ],
+)
+def test_clean_symbols_filter(symbol, kept):
+    assert (_clean_symbols([symbol]) == [symbol.strip().upper()]) is kept
 
 
 def test_get_52_week_highs_returns_max_high_per_symbol():
@@ -150,11 +202,28 @@ def test_get_52_week_highs_skips_symbols_with_no_bars():
     assert get_52_week_highs(["AAPL"], client=client) == {}
 
 
-def test_get_52_week_highs_propagates_api_error():
+def test_get_52_week_highs_propagates_non_400_api_error():
     client = MagicMock()
-    client.get_stock_bars.side_effect = APIError("boom")
+    client.get_stock_bars.side_effect = _api_error(429)
     with pytest.raises(APIError):
         get_52_week_highs(["AAPL"], client=client)
+
+
+def test_get_52_week_highs_falls_back_to_per_symbol_on_batch_400():
+    client = MagicMock()
+    good = _bars(*([10.0] * (MIN_BARS_FOR_52W_HIGH - 1) + [99.0]))
+
+    def per_call(request):
+        symbols = request.symbol_or_symbols
+        if symbols == ["AAPL", "MSFT"]:
+            raise _api_error(400)
+        if symbols == ["AAPL"]:
+            return MagicMock(data={"AAPL": good})
+        raise _api_error(400)
+
+    client.get_stock_bars.side_effect = per_call
+
+    assert get_52_week_highs(["AAPL", "MSFT"], client=client) == {"AAPL": 99.0}
 
 
 def test_get_account_context_maps_account_and_positions():
