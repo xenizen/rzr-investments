@@ -1,3 +1,5 @@
+import env_setup  # noqa: F401 -- loads backend/.env before other imports read os.environ
+
 import os
 
 from flask import Flask, jsonify, request, send_from_directory

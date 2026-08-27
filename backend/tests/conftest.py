@@ -9,3 +9,8 @@ import os
 # imports run.
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+# Load backend/.env (if present) so integration-style checks can hit real
+# Alpaca/EDGAR. Unit tests still stub their clients; test_alpaca_client.py
+# clears ALPACA_* per-test regardless.
+import env_setup  # noqa: E402,F401

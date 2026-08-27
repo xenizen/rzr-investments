@@ -19,6 +19,11 @@ __pycache__
 *.pyc
 .pytest_cache
 
+# Local env / secrets
+.env
+.env.*
+!.env.example
+
 # Playwright
 /test-results/
 /playwright-report/
