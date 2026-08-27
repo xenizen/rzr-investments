@@ -238,6 +238,27 @@ h1 {
   background: var(--accent);
 }
 
+.screener-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.screener-form:not(:empty) {
+  margin-bottom: 20px;
+}
+
+.screener-results:not(:empty) {
+  margin-bottom: 8px;
+}
+
+.screener-disclaimer {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--text-3);
+  margin: 0;
+}
+
 .insider-form {
   display: flex;
   flex-direction: column;
