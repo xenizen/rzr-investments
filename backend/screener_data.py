@@ -2,25 +2,26 @@
 Screener (epic SCRUM-29).
 
 This module answers one question: *what open-market insider purchases (or
-sales) were reported to the SEC in the last N months?* It pulls Form 4
-filings market-wide for that window, parses each one, and flattens it into
-a list of per-transaction records that later stages aggregate (SCRUM-33),
+sales) were just reported to the SEC?* It pulls the most recent market-wide
+Form 4 filings, parses each one, and flattens it into a list of
+per-transaction records that later stages aggregate (SCRUM-33),
 price-filter (SCRUM-34), and paginate (SCRUM-35).
 
-Scope limit: like ``insider_data``'s symbol-less path, a market-wide Form 4
-pull over several months is far too large to materialize in full on every
-request (a single week is ~5-6k filings). Only the most recent
-``SCAN_LIMIT`` filings in the window are parsed; a screen that would need
-to look further back may miss older transactions. This is the known
-trade-off called out on SCRUM-29 -- revisit with caching/async if it bites.
+Scope limit -- there is no user-selectable lookback. Like ``insider_data``'s
+symbol-less path, a market-wide Form 4 pull is far too large to parse in
+full on every request: a single day is ~800 filings, each needing its own
+HTTP fetch + XML parse. Only the most recent ``SCAN_LIMIT`` filings inside a
+short fixed trailing window are parsed, so in practice the screener only
+sees roughly the last day of activity. Historical screening (weeks/months
+back) needs a stored, nightly-refreshed Form 4 dataset -- tracked as
+SCRUM-42, out of scope here.
 """
 
-import calendar
 import itertools
 import math
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, timedelta
 
 import httpx
 from edgar import get_filings, set_identity
@@ -33,8 +34,11 @@ FORM_TYPE = "4"
 DIRECTION_CODES = {"Purchase": "P", "Sold": "S"}
 DEFAULT_DIRECTION = "Purchase"
 
-MIN_MONTHS = 1
-MAX_MONTHS = 6
+# Trailing window handed to get_filings(). Kept small so get_filings stays
+# fast -- it only has to bound the candidate set; SCAN_LIMIT below is what
+# actually decides how much gets parsed. A week comfortably contains
+# SCAN_LIMIT filings even across weekends/holidays.
+LOOKBACK_DAYS = 7
 
 # Most recent filings parsed per request -- see the module docstring.
 SCAN_LIMIT = 1000
@@ -63,25 +67,6 @@ def _validate_direction(direction):
     if code is None:
         raise ValueError(f"direction must be one of {sorted(DIRECTION_CODES)}")
     return code
-
-
-def _validate_months(months):
-    try:
-        months = int(months)
-    except (TypeError, ValueError):
-        raise ValueError(f"months must be an integer between {MIN_MONTHS} and {MAX_MONTHS}")
-    if not MIN_MONTHS <= months <= MAX_MONTHS:
-        raise ValueError(f"months must be between {MIN_MONTHS} and {MAX_MONTHS}")
-    return months
-
-
-def _months_ago(months, today):
-    """The date ``months`` calendar months before ``today``, clamping the day
-    to the target month's length (e.g. Aug 31 - 6 months -> Feb 28/29)."""
-    index = today.year * 12 + (today.month - 1) - months
-    year, month0 = divmod(index, 12)
-    last_day = calendar.monthrange(year, month0 + 1)[1]
-    return date(year, month0 + 1, min(today.day, last_day))
 
 
 def _parse_date(value):
@@ -185,27 +170,27 @@ def _load_filings(filings, loader):
 
 def get_insider_transactions(
     direction=DEFAULT_DIRECTION,
-    months=2,
     *,
     filings_factory=None,
     today=None,
+    lookback_days=LOOKBACK_DAYS,
 ):
     """Return normalized Form 4 transaction records for the given screen.
 
     ``direction`` is "Purchase" or "Sold" (mapped to transaction codes P/S).
-    ``months`` is the 1-6 month lookback window ending today. Each record:
+    There is no lookback parameter -- the screener always reads the most
+    recent filings (see the module docstring and SCRUM-42). Each record:
 
         {issuer_ticker, issuer_cik, issuer_name, insider_name, insider_cik,
          transaction_code, transaction_date, shares, price, filing_date,
          accession_no}
 
     Records are sorted newest transaction first. Raises ``ValueError`` for a
-    bad ``direction`` or ``months`` (SCRUM-36 maps that to a user message).
+    bad ``direction`` (SCRUM-36 maps that to a user message).
     """
     code = _validate_direction(direction)
-    months = _validate_months(months)
     today = today or date.today()
-    window_start = _months_ago(months, today)
+    window_start = today - timedelta(days=lookback_days)
 
     factory = filings_factory or _default_filings
     filings = factory(f"{window_start.isoformat()}:{today.isoformat()}")
