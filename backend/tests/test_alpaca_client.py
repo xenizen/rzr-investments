@@ -5,9 +5,12 @@ from alpaca.common.exceptions import APIError
 
 import alpaca_client
 from alpaca_client import (
+    MIN_BARS_FOR_52W_HIGH,
     AlpacaConfigError,
+    get_52_week_highs,
     get_account_context,
     get_latest_price,
+    get_latest_prices,
     market_data_client,
     trading_client,
 )
@@ -76,6 +79,82 @@ def test_get_latest_price_returns_none_without_credentials():
     # No injected client -> falls through to market_data_client(), which
     # raises AlpacaConfigError; get_latest_price swallows it.
     assert get_latest_price("AAPL") is None
+
+
+def _bars(*highs):
+    return [MagicMock(high=h) for h in highs]
+
+
+def test_get_latest_prices_batches_and_maps_symbols():
+    client = MagicMock()
+    client.get_stock_latest_trade.return_value = {
+        "AAPL": MagicMock(price=100.0),
+        "MSFT": MagicMock(price=200.0),
+    }
+
+    result = get_latest_prices(["aapl", "msft"], client=client)
+
+    assert result == {"AAPL": 100.0, "MSFT": 200.0}
+    request = client.get_stock_latest_trade.call_args.args[0]
+    assert request.symbol_or_symbols == ["AAPL", "MSFT"]
+
+
+def test_get_latest_prices_omits_symbols_with_no_trade():
+    client = MagicMock()
+    client.get_stock_latest_trade.return_value = {"AAPL": MagicMock(price=100.0)}
+
+    assert get_latest_prices(["AAPL", "ZZZZ"], client=client) == {"AAPL": 100.0}
+
+
+def test_get_latest_prices_empty_input_makes_no_call():
+    client = MagicMock()
+    assert get_latest_prices([], client=client) == {}
+    client.get_stock_latest_trade.assert_not_called()
+
+
+def test_get_latest_prices_propagates_api_error():
+    client = MagicMock()
+    client.get_stock_latest_trade.side_effect = APIError("rate limited")
+    with pytest.raises(APIError):
+        get_latest_prices(["AAPL"], client=client)
+
+
+def test_get_52_week_highs_returns_max_high_per_symbol():
+    client = MagicMock()
+    client.get_stock_bars.return_value = MagicMock(
+        data={
+            "AAPL": _bars(*([150.0] * (MIN_BARS_FOR_52W_HIGH - 1) + [242.0])),
+            "MSFT": _bars(*([400.0] * MIN_BARS_FOR_52W_HIGH)),
+        }
+    )
+
+    assert get_52_week_highs(["AAPL", "MSFT"], client=client) == {"AAPL": 242.0, "MSFT": 400.0}
+
+
+def test_get_52_week_highs_skips_symbols_with_insufficient_history():
+    client = MagicMock()
+    client.get_stock_bars.return_value = MagicMock(
+        data={
+            "NEW": _bars(*([50.0] * (MIN_BARS_FOR_52W_HIGH - 1))),  # one short
+            "OLD": _bars(*([50.0] * MIN_BARS_FOR_52W_HIGH)),
+        }
+    )
+
+    assert get_52_week_highs(["NEW", "OLD"], client=client) == {"OLD": 50.0}
+
+
+def test_get_52_week_highs_skips_symbols_with_no_bars():
+    client = MagicMock()
+    client.get_stock_bars.return_value = MagicMock(data={})
+
+    assert get_52_week_highs(["AAPL"], client=client) == {}
+
+
+def test_get_52_week_highs_propagates_api_error():
+    client = MagicMock()
+    client.get_stock_bars.side_effect = APIError("boom")
+    with pytest.raises(APIError):
+        get_52_week_highs(["AAPL"], client=client)
 
 
 def test_get_account_context_maps_account_and_positions():
