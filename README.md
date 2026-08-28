@@ -64,3 +64,23 @@ cd backend
 Migrations are numbered `.up.sql` / `.down.sql` pairs under
 `backend/migrations/`; applied versions are tracked in a `schema_migrations`
 table.
+
+### Backfilling Form 4 history
+
+The screener reads insider transactions from `form4_transactions`. Seed it
+from SEC's quarterly [Insider Transactions Data Sets](https://www.sec.gov/data-research/sec-markets-data/insider-transactions-data-sets)
+(`{YYYY}qN_form345.zip`). Download the quarters you need into
+`backend/data/form345/` (gitignored), then:
+
+```bash
+cd backend
+.venv/bin/python -m form4_ingest.backfill data/form345/2026q1_form345 data/form345/2026q2_form345
+```
+
+Accepts extracted directories or the `.zip` directly, and any number of
+them. Re-running is safe — rows upsert on `(accession_no, trans_sk)`. Add
+`--dry-run` to parse and count without writing. Only Form 4 `P`/`S`
+(open-market purchase/sale) transactions are loaded.
+
+Recent filings not yet covered by a published quarter are filled in by the
+nightly EDGAR ingest (SCRUM-45).
