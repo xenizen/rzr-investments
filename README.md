@@ -83,4 +83,26 @@ them. Re-running is safe — rows upsert on `(accession_no, trans_sk)`. Add
 (open-market purchase/sale) transactions are loaded.
 
 Recent filings not yet covered by a published quarter are filled in by the
-nightly EDGAR ingest (SCRUM-45).
+nightly EDGAR ingest.
+
+### Nightly EDGAR ingest
+
+The quarterly bulk set lags a quarter or more, so a nightly job pulls the
+Form 4s filed since the newest stored one and upserts their P/S rows with
+`source='edgar'`:
+
+```bash
+cd backend
+.venv/bin/python -m form4_ingest.nightly            # newest stored filing_date -> today
+.venv/bin/python -m form4_ingest.nightly --since 2026-07-01   # bound the first catch-up
+.venv/bin/python -m form4_ingest.nightly --dry-run
+```
+
+Logs to stderr, exits non-zero on failure — wire it into cron (see
+SCRUM-49). Idempotent: re-running over a window upserts in place. When a
+new quarter is later backfilled, its `bulk` rows replace the `edgar` rows
+for the same filings.
+
+The **first** run against a table only seeded through a past quarter has a
+months-wide window (tens of thousands of filings, an hour or more). Use
+`--since` to walk it forward in chunks.

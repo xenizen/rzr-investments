@@ -194,20 +194,20 @@ def test_upsert_is_idempotent(db_conn, sample_source):
 
 
 @pg
-def test_bulk_supersedes_edgar_but_edgar_does_not_supersede_bulk(db_conn):
-    line = {
+def test_bulk_load_removes_pre_existing_edgar_rows_for_the_same_filing(db_conn):
+    # An edgar row from the nightly job, with a synthesized trans_sk...
+    edgar_row = {
         "issuer_ticker": "AAPL", "issuer_cik": "320193", "issuer_name": "Apple Inc.",
         "insider_name": "COOK TIMOTHY", "insider_cik": "1214156",
         "transaction_code": "P", "transaction_date": "2026-01-02",
-        "filing_date": "2026-01-05", "shares": 1000.0, "price": 185.5,
-        "accession_no": "A1", "trans_sk": "1",
+        "filing_date": "2026-01-05", "shares": 111.0, "price": 185.5,
+        "accession_no": "A1", "trans_sk": "0",
     }
+    upsert_transactions(db_conn, [edgar_row], "edgar")
 
-    upsert_transactions(db_conn, [dict(line, shares=111.0)], "edgar")
-    # bulk overwrites the edgar row
-    upsert_transactions(db_conn, [dict(line, shares=1000.0)], "bulk")
-    assert _rows(db_conn) == [("A1", "1", "bulk", 1000.0)]
+    # ...is replaced wholesale when the quarter carrying A1 is backfilled,
+    # even though the bulk row's real NONDERIV_TRANS_SK differs.
+    bulk_row = dict(edgar_row, shares=1000.0, trans_sk="8938904")
+    upsert_transactions(db_conn, [bulk_row], "bulk")
 
-    # a later edgar pass must not clobber the authoritative bulk row
-    upsert_transactions(db_conn, [dict(line, shares=999.0)], "edgar")
-    assert _rows(db_conn) == [("A1", "1", "bulk", 1000.0)]
+    assert _rows(db_conn) == [("A1", "8938904", "bulk", 1000.0)]

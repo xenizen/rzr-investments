@@ -24,11 +24,12 @@ plus ``trans_sk`` for the DB natural key::
 
 import csv
 import io
-import itertools
 import zipfile
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
+
+from form4_ingest.text import clean_cik, clean_ticker, coerce_number
 
 # The screener's two directions map onto these Form 4 transaction codes.
 # Every other code (F tax withholding, A grant, M option exercise, ...) is
@@ -115,31 +116,6 @@ def _parse_date(value):
         return None
 
 
-def _coerce_number(value):
-    """Leading numeric run of a cell, or ``None``. Bulk cells are clean
-    decimals; stay defensive against footnote-tainted strings anyway."""
-    value = (value or "").strip()
-    if not value:
-        return None
-    digits = "".join(itertools.takewhile(lambda c: c.isdigit() or c == ".", value))
-    try:
-        return float(digits) if digits else None
-    except ValueError:
-        return None
-
-
-def _clean_cik(value):
-    """SEC bulk zero-pads CIKs to 10 digits; edgartools doesn't. Canonicalize
-    to the unpadded form so bulk and edgar rows agree."""
-    value = (value or "").strip()
-    return str(int(value)) if value.isdigit() else value
-
-
-def _clean_ticker(value):
-    value = (value or "").strip().upper()
-    return "" if value in ("", "NONE", "N/A") else value
-
-
 def _load_form4_submissions(stream):
     submissions = {}
     for row in csv.DictReader(stream, delimiter="\t"):
@@ -179,7 +155,7 @@ def parse_source(source):
             if submission is None:  # Form 3/5, an amendment, or unknown filing
                 continue
 
-            ticker = _clean_ticker(submission.get("ISSUERTRADINGSYMBOL"))
+            ticker = clean_ticker(submission.get("ISSUERTRADINGSYMBOL"))
             if not ticker:
                 continue
 
@@ -187,7 +163,7 @@ def parse_source(source):
             if not trans_sk:
                 continue
 
-            shares = _coerce_number(row.get("TRANS_SHARES"))
+            shares = coerce_number(row.get("TRANS_SHARES"))
             if shares is None or shares <= 0:
                 continue
 
@@ -199,15 +175,15 @@ def parse_source(source):
             owner = owners.get(accession, {})
             yield {
                 "issuer_ticker": ticker,
-                "issuer_cik": _clean_cik(submission.get("ISSUERCIK")),
+                "issuer_cik": clean_cik(submission.get("ISSUERCIK")),
                 "issuer_name": (submission.get("ISSUERNAME") or "").strip(),
                 "insider_name": (owner.get("RPTOWNERNAME") or "").strip(),
-                "insider_cik": _clean_cik(owner.get("RPTOWNERCIK")),
+                "insider_cik": clean_cik(owner.get("RPTOWNERCIK")),
                 "transaction_code": row["TRANS_CODE"],
                 "transaction_date": transaction_date.isoformat(),
                 "filing_date": filing_date.isoformat(),
                 "shares": shares,
-                "price": _coerce_number(row.get("TRANS_PRICEPERSHARE")),
+                "price": coerce_number(row.get("TRANS_PRICEPERSHARE")),
                 "accession_no": accession,
                 "trans_sk": trans_sk,
             }

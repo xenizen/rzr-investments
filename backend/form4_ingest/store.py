@@ -1,14 +1,24 @@
 """Upsert normalized Form 4 records into ``form4_transactions``.
 
 Shared by the quarterly bulk backfill (SCRUM-44) and the nightly EDGAR
-ingest (SCRUM-45). The conflict clause encodes the supersede rule: once a
-``bulk`` row is written for a transaction line, only another ``bulk`` row
-replaces it -- the nightly ``edgar`` pass never clobbers authoritative
-quarterly data for the same ``(accession_no, trans_sk)``.
+ingest (SCRUM-45). Two keys are in play:
+
+* ``(accession_no, trans_sk)`` -- the row natural key, for within-source
+  idempotency: re-running either loader over the same input updates rows
+  in place rather than duplicating them.
+* ``accession_no`` -- the supersede unit *across* sources. The bulk data
+  set carries SEC's real per-line surrogate key (``NONDERIV_TRANS_SK``);
+  the nightly job can only synthesize one, so ``bulk`` and ``edgar`` rows
+  for the same filing never share ``trans_sk``. Instead: a ``bulk`` load
+  deletes any ``edgar`` rows for the filings it touches, and the ``edgar``
+  job skips any filing already covered by ``bulk``. Authoritative
+  quarterly data always wins.
 """
 
-# Column order used for both the INSERT and the per-record value tuple.
-# ``source`` is appended by the caller, not taken from the record.
+from collections import OrderedDict
+
+# Column order for both the INSERT and each value tuple. ``source`` is
+# supplied by the caller, not read from the record.
 _DATA_COLUMNS = (
     "issuer_ticker",
     "issuer_cik",
@@ -32,7 +42,6 @@ _UPSERT = f"""
     ON CONFLICT (accession_no, trans_sk) DO UPDATE SET
         {", ".join(f"{c} = EXCLUDED.{c}" for c in _UPDATABLE)},
         ingested_at = now()
-    WHERE form4_transactions.source <> 'bulk' OR EXCLUDED.source = 'bulk'
 """
 
 VALID_SOURCES = ("bulk", "edgar")
@@ -40,24 +49,49 @@ VALID_SOURCES = ("bulk", "edgar")
 
 def upsert_transactions(conn, records, source, *, batch_size=1000):
     """Upsert ``records`` (dicts from ``form4_ingest.bulk.parse_source`` or
-    the nightly parser) tagged with ``source``.
+    ``form4_ingest.edgar.normalize_filing``) tagged with ``source``.
 
-    Runs on ``conn`` but does not commit -- the caller owns the transaction.
-    Returns the number of records sent to the database.
+    Runs on ``conn`` without committing -- the caller owns the transaction.
+    Returns the number of rows written (after the cross-source supersede
+    rules have been applied).
     """
     if source not in VALID_SOURCES:
         raise ValueError(f"source must be one of {VALID_SOURCES}")
 
-    sent = 0
-    batch = []
+    records = list(records)
+    accessions = list(OrderedDict.fromkeys(record["accession_no"] for record in records))
+    if not accessions:
+        return 0
+
     with conn.cursor() as cur:
-        for record in records:
-            batch.append(tuple(record.get(c) for c in _DATA_COLUMNS) + (source,))
+        if source == "bulk":
+            # Authoritative: drop stale edgar rows for these filings first.
+            cur.execute(
+                "DELETE FROM form4_transactions "
+                "WHERE source = 'edgar' AND accession_no = ANY(%s)",
+                (accessions,),
+            )
+            rows = records
+        else:
+            covered = {
+                row[0]
+                for row in cur.execute(
+                    "SELECT DISTINCT accession_no FROM form4_transactions "
+                    "WHERE source = 'bulk' AND accession_no = ANY(%s)",
+                    (accessions,),
+                ).fetchall()
+            }
+            rows = [record for record in records if record["accession_no"] not in covered]
+
+        written = 0
+        batch = []
+        for record in rows:
+            batch.append(tuple(record.get(column) for column in _DATA_COLUMNS) + (source,))
             if len(batch) >= batch_size:
                 cur.executemany(_UPSERT, batch)
-                sent += len(batch)
+                written += len(batch)
                 batch = []
         if batch:
             cur.executemany(_UPSERT, batch)
-            sent += len(batch)
-    return sent
+            written += len(batch)
+    return written
