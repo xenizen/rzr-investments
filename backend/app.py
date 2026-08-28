@@ -5,6 +5,7 @@ import os
 from flask import Flask, jsonify, request, send_from_directory
 
 from insider_data import get_insider_data
+from screener_run import run_screen
 from stock_price import get_stock_price
 
 # Populated by deployment: the built React app (npm run build's dist/) gets
@@ -33,6 +34,28 @@ def insider_data():
         page=request.args.get("page", 1),
     )
     response = jsonify(result)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.route("/api/insider-screener")
+def insider_screener():
+    try:
+        result = run_screen(
+            direction=request.args.get("direction", "Purchase"),
+            min_shares=request.args.get("shares", 10000),
+            pct_below_high=request.args.get("pct_below_high", 70),
+            months=request.args.get("months", 1),
+            page=request.args.get("page", 1),
+        )
+        status = 200
+    except ValueError as exc:
+        # Out-of-range parameter. SCRUM-36 broadens this to cover upstream
+        # failures (DB down, Alpaca rate limit) with friendlier wording.
+        result = {"error": str(exc)}
+        status = 400
+    response = jsonify(result)
+    response.status_code = status
     response.headers["Cache-Control"] = "no-store"
     return response
 

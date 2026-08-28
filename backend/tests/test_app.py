@@ -95,3 +95,66 @@ def test_insider_data_route_passes_blank_params_through(monkeypatch):
 
     assert response.get_json() == {"error": "No Stock Entered"}
     assert captured == {"symbol": "", "name": "", "date_from": "", "date_to": "", "page": 1}
+
+
+def test_insider_screener_route_returns_run_screen_result(monkeypatch):
+    monkeypatch.setattr(
+        app_module, "run_screen", lambda **kwargs: {"results": [], "total_count": 0}
+    )
+    client = app_module.app.test_client()
+
+    response = client.get("/api/insider-screener")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"results": [], "total_count": 0}
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_insider_screener_route_passes_params_through(monkeypatch):
+    captured = {}
+
+    def fake_run_screen(**kwargs):
+        captured.update(kwargs)
+        return {"results": []}
+
+    monkeypatch.setattr(app_module, "run_screen", fake_run_screen)
+    client = app_module.app.test_client()
+
+    client.get("/api/insider-screener?direction=Sold&shares=15000&pct_below_high=80&months=3&page=2")
+
+    assert captured == {
+        "direction": "Sold",
+        "min_shares": "15000",
+        "pct_below_high": "80",
+        "months": "3",
+        "page": "2",
+    }
+
+
+def test_insider_screener_route_defaults(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(app_module, "run_screen", lambda **kw: captured.update(kw) or {"results": []})
+    client = app_module.app.test_client()
+
+    client.get("/api/insider-screener")
+
+    assert captured == {
+        "direction": "Purchase",
+        "min_shares": 10000,
+        "pct_below_high": 70,
+        "months": 1,
+        "page": 1,
+    }
+
+
+def test_insider_screener_route_maps_value_error_to_400(monkeypatch):
+    def boom(**kwargs):
+        raise ValueError("months must be one of [1, 2, 3, 4, 5, 6]")
+
+    monkeypatch.setattr(app_module, "run_screen", boom)
+    client = app_module.app.test_client()
+
+    response = client.get("/api/insider-screener?months=9")
+
+    assert response.status_code == 400
+    assert response.get_json() == {"error": "months must be one of [1, 2, 3, 4, 5, 6]"}
