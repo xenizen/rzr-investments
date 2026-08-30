@@ -57,9 +57,9 @@ ALTER DATABASE rzr_invest OWNER TO rzr_invest;
 SQL
 ```
 
-That matches the `DATABASE_URL` in `.env.example`. In production the app
-role should be least-privilege and separate from the migration role — see
-SCRUM-50.
+That matches the `DATABASE_URL` in `.env.example`. For the production
+database (InMotion cPanel Postgres) see
+[docs/production-database.md](docs/production-database.md).
 
 Apply the schema (and check migration state) with the runner:
 

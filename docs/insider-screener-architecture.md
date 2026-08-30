@@ -208,4 +208,4 @@ insider activity that made this a candidate.
 | SCRUM-3 | Stock Purchase — where a recommendation is executed |
 | SCRUM-42 | Form 4 bulk ingest / DB store (this data layer) |
 | SCRUM-49 | Cron scheduling + ops docs for the nightly ingest |
-| SCRUM-50 | Provision PostgreSQL on the production host |
+| SCRUM-50 | Provision PostgreSQL on the production host — [runbook](production-database.md) |
