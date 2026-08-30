@@ -481,7 +481,7 @@ def test_falls_back_to_sequential_loading_when_threads_are_unavailable():
     filings = _dated_filings(3)
     factory = _company_factory_returning(filings)
 
-    with patch("insider_data.ThreadPoolExecutor") as mock_executor_cls:
+    with patch("filing_loader.ThreadPoolExecutor") as mock_executor_cls:
         mock_executor = MagicMock()
         mock_executor.map.side_effect = RuntimeError("can't start new thread")
         mock_executor_cls.return_value = mock_executor

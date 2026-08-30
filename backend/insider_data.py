@@ -1,11 +1,12 @@
 import os
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
 import httpx
 from edgar import Company, get_filings, search_filings
 from edgar import set_identity
 from edgar.exceptions import EdgarError
+
+from filing_loader import load_filings
 
 NO_CRITERIA_ENTERED = "No Search Criteria Entered"
 NO_INSIDER_DATA_FOUND = "No Insider Data Found: Real Stock?"
@@ -150,22 +151,9 @@ def _load_search_result(result):
 
 
 def _load_filings(items, loader=_load_filing):
-    """Load a page's worth of filings/search results, in parallel when the
-    host allows it.
-
-    Some shared hosts (e.g. CloudLinux CageFS-limited accounts) cap the
-    account's process/thread count tightly enough that even one extra OS
-    thread fails to start (a plain RuntimeError from the thread pool, not
-    one of FILING_ERRORS) -- fall back to sequential loading rather than
-    fail the whole page when that happens.
-    """
-    executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
-    try:
-        return list(executor.map(loader, items))
-    except RuntimeError:
-        return [loader(item) for item in items]
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+    """A page's worth of filings/search results, loaded in parallel (with a
+    sequential fallback for thread-capped hosts -- see ``filing_loader``)."""
+    return load_filings(items, loader, max_workers=MAX_WORKERS)
 
 
 def _build_results(loaded, name):

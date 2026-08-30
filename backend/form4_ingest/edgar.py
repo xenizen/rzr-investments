@@ -21,13 +21,13 @@ by what the store needs:
 
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
 import httpx
 from edgar import get_filings, set_identity
 from edgar.exceptions import EdgarError
 
+from filing_loader import load_filings
 from form4_ingest.bulk import KEPT_CODES
 from form4_ingest.store import upsert_transactions
 from form4_ingest.text import clean_cik, clean_ticker, coerce_number
@@ -48,10 +48,6 @@ DEFAULT_FALLBACK_DAYS = 7
 # Pass max_filings=0 (CLI: --max-filings 0) to lift it for a deliberate
 # one-shot catch-up.
 MAX_FILINGS_PER_RUN = 4000
-
-# Concurrent filing fetches, with the same CageFS-safe fallback as
-# insider_data. edgartools rate-limits SEC requests itself.
-MAX_WORKERS = 10
 
 # One filing not parsing must not sink the run.
 FILING_ERRORS = (EdgarError, httpx.HTTPError, ValueError, IndexError)
@@ -147,16 +143,6 @@ def normalize_filing(filing):
         return []
 
 
-def _load_filings(filings, loader):
-    executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
-    try:
-        return list(executor.map(loader, filings))
-    except RuntimeError:
-        return [loader(filing) for filing in filings]
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
-
-
 def _cap_filings(filings, max_filings):
     """``(kept, total)``. When ``total`` exceeds ``max_filings``, keep the
     oldest filings up to a whole-day boundary near the cap -- never a
@@ -200,7 +186,7 @@ def ingest(
         )
     logger.info("form4 ingest: parsing %d Form 4 filings", len(filings))
 
-    parsed = _load_filings(filings, normalize_filing)
+    parsed = load_filings(filings, normalize_filing)
     records = [record for batch in parsed for record in batch]
     logger.info("form4 ingest: %d P/S transaction rows parsed", len(records))
 
