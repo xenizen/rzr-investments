@@ -204,6 +204,26 @@ def test_passes_direction_and_months_to_the_source():
         {"pct_below_high": 55},
     ],
 )
-def test_out_of_range_parameters_raise_value_error(kwargs):
-    with pytest.raises(ValueError):
+def test_out_of_range_parameters_raise_screener_param_error(kwargs):
+    from screener_errors import ScreenerParamError
+
+    with pytest.raises(ScreenerParamError):
         _run(RANKING_TXNS, RANKING_PRICES, RANKING_HIGHS, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"direction": "Hold"}, {"months": 9}, {"min_shares": 12345}, {"pct_below_high": 55}],
+)
+def test_parameters_are_validated_before_the_transaction_source_is_called(kwargs):
+    from screener_errors import ScreenerParamError
+
+    source = _source(RANKING_TXNS)
+    with pytest.raises(ScreenerParamError):
+        run_screen(
+            transactions_source=source,
+            price_lookup=_lookup(RANKING_PRICES),
+            high_lookup=_lookup(RANKING_HIGHS),
+            **{"min_shares": 5000, "pct_below_high": 50, **kwargs},
+        )
+    assert source.calls == []

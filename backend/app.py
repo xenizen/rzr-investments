@@ -4,6 +4,7 @@ import os
 
 from flask import Flask, jsonify, request, send_from_directory
 
+import screener_errors
 from insider_data import get_insider_data
 from screener_run import run_screen
 from stock_price import get_stock_price
@@ -48,13 +49,15 @@ def insider_screener():
             months=request.args.get("months", 1),
             page=request.args.get("page", 1),
         )
-        status = 200
-    except ValueError as exc:
-        # Out-of-range parameter. SCRUM-36 broadens this to cover upstream
-        # failures (DB down, Alpaca rate limit) with friendlier wording.
-        result = {"error": str(exc)}
-        status = 400
-    response = jsonify(result)
+        payload, status = result, 200
+    except Exception as exc:  # noqa: BLE001 -- every case is classified below
+        outcome = screener_errors.classify(exc)
+        if outcome.log == "exception":
+            app.logger.exception("insider-screener failed")
+        elif outcome.log == "warning":
+            app.logger.warning("insider-screener: %s: %s", type(exc).__name__, exc)
+        payload, status = {"error": outcome.message}, outcome.status
+    response = jsonify(payload)
     response.status_code = status
     response.headers["Cache-Control"] = "no-store"
     return response

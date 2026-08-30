@@ -19,6 +19,7 @@ Recommendations only -- nothing here places an order.
 import math
 
 import screener
+import screener_errors
 import screener_pricing
 import screener_repo
 import screener_source
@@ -39,6 +40,25 @@ def _parse_page(page):
     except (TypeError, ValueError):
         return 1
     return page if page >= 1 else 1
+
+
+def _validated(direction, min_shares, pct_below_high, months):
+    """Check every parameter up front -- before any DB or Alpaca call
+    (SCRUM-36) -- and return the coerced numeric ones. The per-stage
+    functions still re-validate; this is the gate that keeps a bad
+    ``pct_below_high`` from costing a DB query first.
+
+    Re-raises the validators' ``ValueError`` as ``ScreenerParamError`` so the
+    endpoint can tell "bad request" from "something broke".
+    """
+    try:
+        screener_repo._validate_direction(direction)
+        months = screener_repo._validate_months(months)
+        min_shares = screener._validate_min_shares(min_shares)
+        pct_below_high = screener_pricing._validate_pct_below_high(pct_below_high)
+    except ValueError as exc:
+        raise screener_errors.ScreenerParamError(str(exc)) from exc
+    return min_shares, pct_below_high, months
 
 
 def _rank(candidates):
@@ -102,11 +122,14 @@ def run_screen(
         {results: [row, ...], page, page_size, total_count, total_pages,
          has_next}
 
-    Raises ``ValueError`` for any out-of-range parameter (the source's
-    ``direction``/``months``, the aggregator's ``min_shares``, the pricer's
-    ``pct_below_high``) -- SCRUM-36 maps those to user-facing messages.
+    Raises ``screener_errors.ScreenerParamError`` (a ``ValueError``) for any
+    out-of-range parameter, before any DB or Alpaca call. Upstream failures
+    (DB, Alpaca) propagate for the endpoint to classify (SCRUM-36).
     ``*_source`` / ``*_lookup`` are injectable for tests.
     """
+    min_shares, pct_below_high, months = _validated(
+        direction, min_shares, pct_below_high, months
+    )
     source = transactions_source or screener_source.get_insider_transactions
     page = _parse_page(page)
 
