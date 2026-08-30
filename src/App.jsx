@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import Stocks from './pages/Stocks'
 import InsiderData from './pages/InsiderData'
+import InsiderScreener from './pages/InsiderScreener'
 
 const PAGES = {
   stocks: { label: 'Stock Price', Component: Stocks },
   insider: { label: 'Insider Data', Component: InsiderData },
+  screener: { label: 'Screener', Component: InsiderScreener },
 }
 
 function App() {

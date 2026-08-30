@@ -1,8 +1,12 @@
+import env_setup  # noqa: F401 -- loads backend/.env before other imports read os.environ
+
 import os
 
 from flask import Flask, jsonify, request, send_from_directory
 
+import screener_errors
 from insider_data import get_insider_data
+from screener_run import run_screen
 from stock_price import get_stock_price
 
 # Populated by deployment: the built React app (npm run build's dist/) gets
@@ -31,6 +35,30 @@ def insider_data():
         page=request.args.get("page", 1),
     )
     response = jsonify(result)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.route("/api/insider-screener")
+def insider_screener():
+    try:
+        result = run_screen(
+            direction=request.args.get("direction", "Purchase"),
+            min_shares=request.args.get("shares", 10000),
+            pct_below_high=request.args.get("pct_below_high", 70),
+            months=request.args.get("months", 1),
+            page=request.args.get("page", 1),
+        )
+        payload, status = result, 200
+    except Exception as exc:  # noqa: BLE001 -- every case is classified below
+        outcome = screener_errors.classify(exc)
+        if outcome.log == "exception":
+            app.logger.exception("insider-screener failed")
+        elif outcome.log == "warning":
+            app.logger.warning("insider-screener: %s: %s", type(exc).__name__, exc)
+        payload, status = {"error": outcome.message}, outcome.status
+    response = jsonify(payload)
+    response.status_code = status
     response.headers["Cache-Control"] = "no-store"
     return response
 

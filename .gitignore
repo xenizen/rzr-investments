@@ -19,6 +19,15 @@ __pycache__
 *.pyc
 .pytest_cache
 
+# Local env / secrets
+.env
+.env.*
+!.env.example
+
+# SEC bulk data sets -- local ingest source for the Form 4 store (SCRUM-42).
+# Downloaded quarterly form345 zips and their extracted TSVs; not committed.
+backend/data/
+
 # Playwright
 /test-results/
 /playwright-report/

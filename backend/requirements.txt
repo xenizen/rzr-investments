@@ -1,3 +1,5 @@
 flask
 alpaca-py
 edgartools
+python-dotenv
+psycopg[binary]
