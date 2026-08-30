@@ -252,6 +252,63 @@ h1 {
   margin-bottom: 8px;
 }
 
+.screener-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-3);
+  text-align: left;
+}
+
+.screener-select {
+  font: inherit;
+  font-size: 0.9375rem;
+  font-weight: 400;
+  color: var(--text-1);
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 100px;
+  padding: 12px 20px;
+  outline: none;
+  cursor: pointer;
+  transition:
+    border-color 0.3s var(--silk),
+    box-shadow 0.3s var(--silk);
+}
+
+.screener-select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-ghost);
+}
+
+.screener-form .stock-btn {
+  margin-top: 4px;
+}
+
+.screener-hint {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--text-3);
+  margin: 4px 0 0;
+  text-align: left;
+}
+
+.screener-row-stub {
+  font-size: 0.8125rem;
+  color: var(--text-2);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.screener-row-stub:last-child {
+  border-bottom: none;
+}
+
 .screener-disclaimer {
   font-size: 0.75rem;
   line-height: 1.5;
