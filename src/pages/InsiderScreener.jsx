@@ -13,13 +13,15 @@ const SCREENING_MESSAGE = 'Screening…'
 const NO_MATCHES_MESSAGE = 'No matches for these parameters. Try a wider window or a smaller trade size.'
 const REQUEST_FAILED_MESSAGE = 'Something went wrong running the screen. Please try again.'
 
-function buildQuery({ direction, shares, months, pct_below_high }) {
-  return new URLSearchParams({
+function buildQuery({ direction, shares, months, pct_below_high }, page) {
+  const query = new URLSearchParams({
     direction,
     shares: String(shares),
     months: String(months),
     pct_below_high: String(pct_below_high),
-  }).toString()
+  })
+  if (page && page > 1) query.set('page', String(page))
+  return query.toString()
 }
 
 function formatShares(value) {
@@ -75,6 +77,11 @@ function ScreenerRow({ row, expanded, onToggle }) {
 
 function InsiderScreener() {
   const [params, setParams] = useState(DEFAULT_PARAMS)
+  // The params the visible results were fetched with -- kept separate from
+  // the dropdowns so paging uses what was actually screened, even if the
+  // user has since changed a dropdown without clicking Run screen again.
+  const [activeParams, setActiveParams] = useState(null)
+  const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState(null)
@@ -84,29 +91,50 @@ function InsiderScreener() {
     setParams((prev) => ({ ...prev, [key]: value }))
   }
 
-  async function handleRunScreen() {
+  async function runScreen(searchParams, targetPage) {
     setLoading(true)
     setError('')
-    setResult(null)
     setExpanded(null)
     try {
       const response = await fetch(
-        `${import.meta.env.BASE_URL}api/insider-screener?${buildQuery(params)}`,
+        `${import.meta.env.BASE_URL}api/insider-screener?${buildQuery(searchParams, targetPage)}`,
       )
       const data = await response.json()
       if (data.error) {
         setError(data.error)
+        setResult(null)
         return
       }
       setResult(data)
+      setActiveParams(searchParams)
+      setPage(data.page ?? targetPage)
     } catch {
       setError(REQUEST_FAILED_MESSAGE)
+      setResult(null)
     } finally {
       setLoading(false)
     }
   }
 
+  function handleRunScreen() {
+    // Any Run screen click starts a fresh screen at page 1.
+    runScreen(params, 1)
+  }
+
+  function handlePrevPage() {
+    if (loading || !activeParams || page <= 1) return
+    runScreen(activeParams, page - 1)
+  }
+
+  function handleNextPage() {
+    if (loading || !activeParams || !result?.has_next) return
+    runScreen(activeParams, page + 1)
+  }
+
   const rows = result?.results ?? []
+  const showTable = Boolean(result && result.total_count > 0)
+  const rangeStart = showTable ? (page - 1) * result.page_size + 1 : 0
+  const rangeEnd = rangeStart ? rangeStart + rows.length - 1 : 0
 
   return (
     <div id="insider-screener" className="stock-card">
@@ -199,24 +227,24 @@ function InsiderScreener() {
       </div>
 
       <div id="screenerResults" className="screener-results">
-        {loading && <p className="screener-status">{SCREENING_MESSAGE}</p>}
-
         {!loading && error && (
           <p id="lblScreenerError" className="screener-status screener-error" role="alert">
             {error}
           </p>
         )}
 
-        {!loading && !error && result && rows.length === 0 && (
+        {!loading && !error && result && result.total_count === 0 && (
           <p id="lblScreenerEmpty" className="screener-status screener-empty">
             {NO_MATCHES_MESSAGE}
           </p>
         )}
 
-        {!loading && !error && rows.length > 0 && (
+        {loading && !showTable && <p className="screener-status">{SCREENING_MESSAGE}</p>}
+
+        {showTable && (
           <>
-            <p className="screener-count">
-              {result.total_count} {result.total_count === 1 ? 'match' : 'matches'}
+            <p className="screener-count" id="lblScreenerRange">
+              {loading ? SCREENING_MESSAGE : `Showing ${rangeStart}–${rangeEnd} of ${result.total_count}`}
             </p>
             <div className="insider-table-wrap">
               <table id="screenerResultsTable" className="insider-table">
@@ -243,6 +271,29 @@ function InsiderScreener() {
                   ))}
                 </tbody>
               </table>
+            </div>
+            <div id="screenerPagination" className="insider-pagination">
+              <button
+                type="button"
+                id="btnScreenerPrev"
+                className="insider-page-btn"
+                onClick={handlePrevPage}
+                disabled={loading || page <= 1}
+              >
+                Previous
+              </button>
+              <span className="insider-page-info">
+                Page {page} of {result.total_pages}
+              </span>
+              <button
+                type="button"
+                id="btnScreenerNext"
+                className="insider-page-btn"
+                onClick={handleNextPage}
+                disabled={loading || !result.has_next}
+              >
+                Next
+              </button>
             </div>
           </>
         )}

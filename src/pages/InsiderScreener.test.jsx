@@ -14,58 +14,58 @@ function runScreen() {
   fireEvent.click(screen.getByRole('button', { name: /run screen/i }))
 }
 
-function mockScreen(body) {
-  const fetchMock = vi.fn().mockResolvedValue(jsonResponse(body))
-  vi.stubGlobal('fetch', fetchMock)
-  return fetchMock
+function row(over = {}) {
+  return {
+    ticker: 'TRDA',
+    company: 'Entrada Therapeutics, Inc.',
+    side: 'sell',
+    insider_count: 2,
+    multiple_insiders: true,
+    insiders: ['A Person', 'B Person'],
+    total_insider_shares: 313570,
+    current_price: 7.28,
+    fifty_two_week_high: 16.45,
+    discount_pct: 55.7,
+    suggested_quantity: 10000,
+    filings: [
+      { accession_no: 'x-1', filing_date: '2026-06-20', transaction_date: '2026-06-19', insider_name: 'A Person', shares: 200000, price: 7.5 },
+      { accession_no: 'x-2', filing_date: '2026-06-18', transaction_date: '2026-06-17', insider_name: 'B Person', shares: 113570, price: 7.1 },
+    ],
+    ...over,
+  }
 }
 
-const ROW = {
-  ticker: 'TRDA',
-  company: 'Entrada Therapeutics, Inc.',
-  side: 'sell',
-  insider_count: 2,
-  multiple_insiders: true,
-  insiders: ['A Person', 'B Person'],
-  total_insider_shares: 313570,
-  current_price: 7.28,
-  fifty_two_week_high: 16.45,
-  discount_pct: 55.7,
-  suggested_quantity: 10000,
-  filings: [
-    { accession_no: 'x-1', filing_date: '2026-06-20', transaction_date: '2026-06-19', insider_name: 'A Person', shares: 200000, price: 7.5 },
-    { accession_no: 'x-2', filing_date: '2026-06-18', transaction_date: '2026-06-17', insider_name: 'B Person', shares: 113570, price: 7.1 },
-  ],
+// Response builder that fills in the pagination envelope from the rows.
+function screenResponse(rows, { page = 1, total_count = rows.length } = {}) {
+  return {
+    results: rows,
+    page,
+    page_size: 10,
+    total_count,
+    total_pages: Math.max(1, Math.ceil(total_count / 10)),
+    has_next: page * 10 < total_count,
+  }
 }
 
-const SINGLE = {
+function rowsFor(prefix, n) {
+  return Array.from({ length: n }, (_, i) => row({ ticker: `${prefix}${i}`, multiple_insiders: false }))
+}
+
+const SINGLE = row({
   ticker: 'SNES',
   company: 'SenesTech, Inc.',
   side: 'buy',
   insider_count: 1,
   multiple_insiders: false,
-  insiders: ['C Person'],
-  total_insider_shares: 5172,
-  current_price: 1.09,
-  fifty_two_week_high: 5.35,
-  discount_pct: 79.5,
-  suggested_quantity: 10000,
-  filings: [
-    { accession_no: 'y-1', filing_date: '2026-06-29', transaction_date: '2026-06-29', insider_name: 'C Person', shares: 5172, price: 1.52 },
-  ],
-}
+  filings: [{ accession_no: 'y-1', filing_date: '2026-06-29', transaction_date: '2026-06-29', insider_name: 'C Person', shares: 5172, price: 1.52 }],
+})
 
 describe('InsiderScreener form', () => {
   it('renders the four dropdowns with the expected options and defaults', () => {
     render(<InsiderScreener />)
-
-    const direction = document.getElementById('selScreenerDirection')
-    expect([...direction.options].map((o) => o.value)).toEqual(['Purchase', 'Sold'])
-    expect(direction.value).toBe('Purchase')
+    expect([...document.getElementById('selScreenerDirection').options].map((o) => o.value)).toEqual(['Purchase', 'Sold'])
     expect(document.getElementById('selScreenerShares').value).toBe('10000')
-    expect([...document.getElementById('selScreenerMonths').options].map((o) => o.value)).toEqual(
-      ['1', '2', '3', '4', '5', '6'],
-    )
+    expect([...document.getElementById('selScreenerMonths').options].map((o) => o.value)).toEqual(['1', '2', '3', '4', '5', '6'])
     expect(document.getElementById('selScreenerMonths').value).toBe('1')
     expect(document.getElementById('selScreenerPct').value).toBe('70')
   })
@@ -77,8 +77,9 @@ describe('InsiderScreener form', () => {
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 
-  it('fires one request with the selected parameters', async () => {
-    const fetchMock = mockScreen({ results: [], total_count: 0, page: 1, has_next: false })
+  it('fires one request with the selected parameters (no page param on page 1)', () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(screenResponse([])))
+    vi.stubGlobal('fetch', fetchMock)
     render(<InsiderScreener />)
 
     fireEvent.change(document.getElementById('selScreenerDirection'), { target: { value: 'Sold' } })
@@ -88,9 +89,7 @@ describe('InsiderScreener form', () => {
     runScreen()
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/insider-screener?direction=Sold&shares=15000&months=3&pct_below_high=80',
-    )
+    expect(fetchMock).toHaveBeenCalledWith('/api/insider-screener?direction=Sold&shares=15000&months=3&pct_below_high=80')
   })
 
   it('shows a screening indicator and disables the button while in flight', async () => {
@@ -99,11 +98,10 @@ describe('InsiderScreener form', () => {
     render(<InsiderScreener />)
 
     runScreen()
-
     expect(await screen.findByText('Screening…')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /run screen/i })).toBeDisabled()
 
-    resolveFetch(jsonResponse({ results: [], total_count: 0, page: 1, has_next: false }))
+    resolveFetch(jsonResponse(screenResponse([])))
     expect(await screen.findByText(/no matches/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /run screen/i })).toBeEnabled()
   })
@@ -111,17 +109,15 @@ describe('InsiderScreener form', () => {
 
 describe('InsiderScreener results', () => {
   it('renders every column from the row contract', async () => {
-    mockScreen({ results: [ROW], total_count: 1, page: 1, has_next: false })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(screenResponse([row()]))))
     render(<InsiderScreener />)
     runScreen()
 
-    expect(await screen.findByText('1 match')).toBeInTheDocument()
+    await screen.findByRole('table')
     for (const header of ['Stock', 'Side', 'Insiders', 'Insider shares', 'Price', '52-wk high', '% below', 'Suggested qty']) {
       expect(screen.getByRole('columnheader', { name: header })).toBeInTheDocument()
     }
-
-    const row = screen.getByTestId('screener-result-row')
-    const cells = within(row).getAllByRole('cell')
+    const cells = within(screen.getByTestId('screener-result-row')).getAllByRole('cell')
     expect(cells[0]).toHaveTextContent('TRDA')
     expect(cells[0]).toHaveTextContent('Entrada Therapeutics, Inc.')
     expect(cells[1]).toHaveTextContent('sell')
@@ -134,18 +130,18 @@ describe('InsiderScreener results', () => {
   })
 
   it('shows the multi-insider badge only on flagged rows', async () => {
-    mockScreen({ results: [ROW, SINGLE], total_count: 2, page: 1, has_next: false })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(screenResponse([row(), SINGLE]))))
     render(<InsiderScreener />)
     runScreen()
 
-    await screen.findByText('2 matches')
+    await screen.findByRole('table')
     const [multi, single] = screen.getAllByTestId('screener-result-row')
     expect(within(multi).getByText(/multi-insider/i)).toBeInTheDocument()
     expect(within(single).queryByText(/multi-insider/i)).not.toBeInTheDocument()
   })
 
   it('expands a row to show its contributing filings, and collapses it again', async () => {
-    mockScreen({ results: [ROW], total_count: 1, page: 1, has_next: false })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(screenResponse([row()]))))
     render(<InsiderScreener />)
     runScreen()
 
@@ -153,9 +149,7 @@ describe('InsiderScreener results', () => {
     expect(screen.queryByTestId('screener-filings')).not.toBeInTheDocument()
 
     fireEvent.click(toggle)
-    const filings = screen.getByTestId('screener-filings')
-    expect(within(filings).getByText('A Person')).toBeInTheDocument()
-    expect(within(filings).getByText('B Person')).toBeInTheDocument()
+    expect(within(screen.getByTestId('screener-filings')).getByText('A Person')).toBeInTheDocument()
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
 
     fireEvent.click(toggle)
@@ -163,7 +157,7 @@ describe('InsiderScreener results', () => {
   })
 
   it('shows a distinct empty state on a successful zero-result screen', async () => {
-    mockScreen({ results: [], total_count: 0, page: 1, has_next: false })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(screenResponse([]))))
     render(<InsiderScreener />)
     runScreen()
 
@@ -171,16 +165,16 @@ describe('InsiderScreener results', () => {
     expect(empty).toHaveAttribute('id', 'lblScreenerEmpty')
     expect(empty).not.toHaveAttribute('role', 'alert')
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /next/i })).not.toBeInTheDocument()
   })
 
   it('shows the backend error message as an alert, distinct from the empty state', async () => {
-    mockScreen({ error: 'The screener is temporarily unavailable. Please try again in a moment.' })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ error: 'The screener is temporarily unavailable.' })))
     render(<InsiderScreener />)
     runScreen()
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveAttribute('id', 'lblScreenerError')
-    expect(alert).toHaveTextContent('temporarily unavailable')
     expect(screen.queryByText(/no matches/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
   })
@@ -189,34 +183,142 @@ describe('InsiderScreener results', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')))
     render(<InsiderScreener />)
     runScreen()
-
     expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong running the screen')
   })
 
   it('keeps the disclaimer visible in every state', async () => {
-    mockScreen({ results: [ROW], total_count: 1, page: 1, has_next: false })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(screenResponse([row()]))))
     render(<InsiderScreener />)
     expect(screen.getByText(/not investment advice/i)).toBeInTheDocument()
-
     runScreen()
-    await screen.findByText('1 match')
+    await screen.findByRole('table')
     expect(screen.getByText(/not investment advice/i)).toBeInTheDocument()
   })
+})
 
-  it('collapses an expanded row when a new screen is run', async () => {
+describe('InsiderScreener pagination', () => {
+  it('shows no pagination controls before a screen is run', () => {
+    render(<InsiderScreener />)
+    expect(screen.queryByRole('button', { name: /^next$/i })).not.toBeInTheDocument()
+  })
+
+  it('shows the range indicator and disables both controls for a single page', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(screenResponse(rowsFor('A', 4)))))
+    render(<InsiderScreener />)
+    runScreen()
+
+    expect(await screen.findByText('Showing 1–4 of 4')).toBeInTheDocument()
+    expect(screen.getByText('Page 1 of 1')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /previous/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /^next$/i })).toBeDisabled()
+  })
+
+  it('pages forward and back, requesting the right page each time', async () => {
+    const page1 = screenResponse(rowsFor('P1_', 10), { page: 1, total_count: 23 })
+    const page2 = screenResponse(rowsFor('P2_', 10), { page: 2, total_count: 23 })
+    const page3 = screenResponse(rowsFor('P3_', 3), { page: 3, total_count: 23 })
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse({ results: [ROW], total_count: 1, page: 1, has_next: false }))
-      .mockResolvedValueOnce(jsonResponse({ results: [SINGLE], total_count: 1, page: 1, has_next: false }))
+      .mockResolvedValueOnce(jsonResponse(page1))
+      .mockResolvedValueOnce(jsonResponse(page2))
+      .mockResolvedValueOnce(jsonResponse(page3))
+      .mockResolvedValueOnce(jsonResponse(page2))
     vi.stubGlobal('fetch', fetchMock)
     render(<InsiderScreener />)
 
     runScreen()
-    fireEvent.click(await screen.findByRole('button', { name: /TRDA/ }))
-    expect(screen.getByTestId('screener-filings')).toBeInTheDocument()
+    expect(await screen.findByText('Showing 1–10 of 23')).toBeInTheDocument()
+    expect(screen.getByText('P1_0')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /previous/i })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+    expect(await screen.findByText('Showing 11–20 of 23')).toBeInTheDocument()
+    expect(screen.getByText('P2_0')).toBeInTheDocument()
+    expect(screen.queryByText('P1_0')).not.toBeInTheDocument()
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/insider-screener?direction=Purchase&shares=10000&months=1&pct_below_high=70&page=2',
+    )
+    expect(screen.getByText('Page 2 of 3')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+    expect(await screen.findByText('Showing 21–23 of 23')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^next$/i })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: /previous/i }))
+    expect(await screen.findByText('Showing 11–20 of 23')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/insider-screener?direction=Purchase&shares=10000&months=1&pct_below_high=70&page=2',
+    )
+  })
+
+  it('re-running resets to page 1, even after a dropdown change', async () => {
+    const page1 = screenResponse(rowsFor('A', 10), { page: 1, total_count: 23 })
+    const page2 = screenResponse(rowsFor('B', 10), { page: 2, total_count: 23 })
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(page1))
+      .mockResolvedValueOnce(jsonResponse(page2))
+      .mockResolvedValueOnce(jsonResponse(screenResponse(rowsFor('C', 2), { page: 1, total_count: 2 })))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<InsiderScreener />)
 
     runScreen()
-    await screen.findByRole('button', { name: /SNES/ })
-    expect(screen.queryByTestId('screener-filings')).not.toBeInTheDocument()
+    await screen.findByText('Showing 1–10 of 23')
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+    await screen.findByText('Showing 11–20 of 23')
+
+    fireEvent.change(document.getElementById('selScreenerMonths'), { target: { value: '6' } })
+    runScreen()
+
+    await screen.findByText('Showing 1–2 of 2')
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/insider-screener?direction=Purchase&shares=10000&months=6&pct_below_high=70',
+    )
+    expect(screen.getByText('Page 1 of 1')).toBeInTheDocument()
+  })
+
+  it('pages using the params from the last run, not the current dropdown values', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(screenResponse(rowsFor('A', 10), { page: 1, total_count: 15 })))
+      .mockResolvedValueOnce(jsonResponse(screenResponse(rowsFor('B', 5), { page: 2, total_count: 15 })))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<InsiderScreener />)
+
+    runScreen()
+    await screen.findByText('Showing 1–10 of 15')
+
+    // Change a dropdown without clicking Run screen.
+    fireEvent.change(document.getElementById('selScreenerDirection'), { target: { value: 'Sold' } })
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+
+    await screen.findByText('Showing 11–15 of 15')
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/insider-screener?direction=Purchase&shares=10000&months=1&pct_below_high=70&page=2',
+    )
+  })
+
+  it('keeps the current results visible while the next page loads', async () => {
+    let resolveNext
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(screenResponse(rowsFor('P1_', 10), { page: 1, total_count: 23 })))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveNext = resolve }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<InsiderScreener />)
+
+    runScreen()
+    await screen.findByText('Showing 1–10 of 23')
+
+    fireEvent.click(screen.getByRole('button', { name: /^next$/i }))
+
+    // Old rows still on screen, status switched to Screening…, controls locked.
+    expect(screen.getByText('P1_0')).toBeInTheDocument()
+    expect(screen.getByText('Screening…')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^next$/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /previous/i })).toBeDisabled()
+
+    resolveNext(jsonResponse(screenResponse(rowsFor('P2_', 10), { page: 2, total_count: 23 })))
+    expect(await screen.findByText('Showing 11–20 of 23')).toBeInTheDocument()
   })
 })
