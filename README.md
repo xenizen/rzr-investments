@@ -36,6 +36,13 @@ It uses Alpaca for read-only market data and paper-account context only; it
 never places orders, and the trading client is pinned to Alpaca's paper
 environment.
 
+## Insider Screener
+
+See [docs/insider-screener-architecture.md](docs/insider-screener-architecture.md)
+for how the screener works end to end — request flow, the `form4_transactions`
+store, ingest jobs, dependencies and failure modes, parameter semantics, and the
+result contract.
+
 ## Database (Form 4 transaction store)
 
 Epic SCRUM-42 stores normalized SEC Form 4 transactions in PostgreSQL. One-time
