@@ -5,10 +5,10 @@ quarter or more behind. This job fills the gap: each night it pulls the
 Form 4s filed since the newest one already stored and upserts their
 open-market (P/S) transactions with ``source='edgar'``.
 
-The filing parser here deliberately mirrors
-``screener_data._normalize_filing``; the two converge in SCRUM-48, when the
-live-EDGAR request path is retired and ``screener_data`` is deleted.
-Differences, driven by what the store needs:
+This is the only Form 4 XML parser in the codebase. It grew from the old
+live-EDGAR request path (``screener_data``, retired in SCRUM-48 once the DB
+became authoritative). What it does differently from a naive port, driven
+by what the store needs:
 
 * keeps both P and S in one pass (no direction filter);
 * keeps every P/S line regardless of transaction date -- the screener's
@@ -41,10 +41,10 @@ FORM_TYPE = "4"
 DEFAULT_FALLBACK_DAYS = 7
 
 # Concurrent filing fetches, with the same CageFS-safe fallback as
-# screener_data / insider_data. edgartools rate-limits SEC requests itself.
+# insider_data. edgartools rate-limits SEC requests itself.
 MAX_WORKERS = 10
 
-# One filing not parsing must not sink the run: same set screener_data uses.
+# One filing not parsing must not sink the run.
 FILING_ERRORS = (EdgarError, httpx.HTTPError, ValueError, IndexError)
 
 set_identity(os.environ.get("EDGAR_IDENTITY", "enochmgmt.com enzork@gmail.com"))

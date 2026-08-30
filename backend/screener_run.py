@@ -3,7 +3,7 @@
 ``run_screen`` is the one call the API endpoint makes. It chains the pieces
 built by the earlier stories:
 
-    screener_source.get_insider_transactions   (SCRUM-46 -> DB, or SCRUM-32)
+    screener_repo.get_insider_transactions     (SCRUM-46: the form4_transactions DB)
         -> screener.aggregate_by_issuer        (SCRUM-33: threshold + rollup)
         -> screener_pricing.enrich_and_filter  (SCRUM-34: price + 52wk filter)
         -> rank
@@ -22,7 +22,6 @@ import screener
 import screener_errors
 import screener_pricing
 import screener_repo
-import screener_source
 
 PAGE_SIZE = 10
 
@@ -130,7 +129,7 @@ def run_screen(
     min_shares, pct_below_high, months = _validated(
         direction, min_shares, pct_below_high, months
     )
-    source = transactions_source or screener_source.get_insider_transactions
+    source = transactions_source or screener_repo.get_insider_transactions
     page = _parse_page(page)
 
     transactions = source(direction, months=months)

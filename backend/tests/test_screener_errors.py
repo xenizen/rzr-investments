@@ -1,6 +1,5 @@
 from unittest.mock import MagicMock
 
-import httpx
 import psycopg
 import pytest
 from alpaca.common.exceptions import APIError
@@ -55,18 +54,6 @@ def test_other_alpaca_api_error_is_a_502():
     result = classify(_api_error(500))
     assert result.status == 502
     assert "price data" in result.message.lower()
-
-
-def test_edgar_error_classified_by_module_name_without_importing_edgar():
-    fake_edgar_exc = type("EdgarError", (Exception,), {"__module__": "edgar.exceptions"})()
-    result = classify(fake_edgar_exc)
-    assert result.status == 503
-    assert result.log == "warning"
-
-
-def test_httpx_error_is_a_503():
-    result = classify(httpx.ConnectError("dns failure"))
-    assert result.status == 503
 
 
 def test_unexpected_exception_is_a_generic_logged_500():

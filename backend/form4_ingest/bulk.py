@@ -37,8 +37,7 @@ from form4_ingest.text import clean_cik, clean_ticker, coerce_number
 KEPT_CODES = {"P", "S"}
 
 # Form 4s only -- not Form 3 (initial), Form 5 (annual), or the ``/A``
-# amendments. Mirrors edgartools' ``get_filings(form="4")`` in the live path
-# (screener_data).
+# amendments. Matches ``get_filings(form="4")`` in the nightly EDGAR ingest.
 FORM4_DOCUMENT_TYPE = "4"
 
 _TABLES = ("SUBMISSION.tsv", "REPORTINGOWNER.tsv", "NONDERIV_TRANS.tsv")

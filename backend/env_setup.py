@@ -6,7 +6,7 @@ gitignored ``backend/.env`` (see ``.env.example``) is easier than exporting
 ``ALPACA_API_KEY`` / ``ALPACA_SECRET_KEY`` / ``EDGAR_IDENTITY`` by hand.
 
 Import this module *before* anything that reads ``os.environ`` at import
-time (``insider_data`` and ``screener_data`` call ``set_identity`` on
+time (``insider_data`` and ``form4_ingest.edgar`` call ``set_identity`` on
 import). Real environment variables always win -- ``load_dotenv`` does not
 override values that are already set.
 """

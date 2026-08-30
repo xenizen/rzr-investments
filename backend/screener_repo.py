@@ -1,17 +1,18 @@
 """DB-backed Form 4 transaction source for the Insider-Transaction Screener
 (epic SCRUM-29, story SCRUM-46).
 
-Drop-in replacement for ``screener_data.get_insider_transactions``: same
-record shape, so ``screener.aggregate_by_issuer`` (SCRUM-33) and
-``screener_pricing.enrich_and_filter`` (SCRUM-34) consume the output
-unchanged. The difference is where the rows come from -- the
-``form4_transactions`` table filled by the bulk backfill (SCRUM-44) and the
-nightly EDGAR ingest (SCRUM-45), instead of a live market-wide EDGAR pull.
-No SEC request happens on the screener's request path any more.
+The screener's only Form 4 source. Rows come from the
+``form4_transactions`` table -- filled by the bulk backfill (SCRUM-44) and
+the nightly EDGAR ingest (SCRUM-45) -- so no SEC request happens on the
+screener's request path. Output matches the record shape
+``screener.aggregate_by_issuer`` (SCRUM-33) and
+``screener_pricing.enrich_and_filter`` (SCRUM-34) consume.
 
-Because history is now cheap to query, this function takes a ``months``
-lookback (1-6). SCRUM-47 wires that to a UI dropdown; until then callers
-get ``DEFAULT_MONTHS``.
+(Before SCRUM-48 this replaced a live market-wide EDGAR pull,
+``screener_data``, which is now retired.)
+
+Because history is cheap to query, ``get_insider_transactions`` takes a
+``months`` lookback (1-6), wired to the UI dropdown in SCRUM-47.
 """
 
 import calendar
@@ -19,9 +20,7 @@ from datetime import date
 
 import db
 
-# "Purchase" / "Sold" -> Form 4 transaction code. Same mapping as
-# screener_data; kept here so this module stands alone once that one goes
-# (SCRUM-48).
+# "Purchase" / "Sold" -> Form 4 transaction code.
 DIRECTION_CODES = {"Purchase": "P", "Sold": "S"}
 DEFAULT_DIRECTION = "Purchase"
 

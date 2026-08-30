@@ -27,9 +27,8 @@ For local dev, copy `backend/.env.example` to `backend/.env` and fill it in.
 | --- | --- | --- |
 | `ALPACA_API_KEY` | stock price, insider screener | Alpaca **paper** account key. |
 | `ALPACA_SECRET_KEY` | stock price, insider screener | Alpaca paper account secret. |
-| `EDGAR_IDENTITY` | insider data, insider screener | `name email` string SEC EDGAR requires on every request. Defaults to a placeholder if unset. |
+| `EDGAR_IDENTITY` | insider data, Form 4 ingest | `name email` string SEC EDGAR requires on every request. Defaults to a placeholder if unset. |
 | `DATABASE_URL` | Form 4 transaction store (epic SCRUM-42) | libpq URL for the PostgreSQL database the bulk ingest writes to and the screener reads from. |
-| `SCREENER_USE_DB` | insider screener | Optional. `0` falls the screener back to a live-EDGAR pull instead of the DB; defaults on. Temporary, removed in SCRUM-48. |
 
 The insider screener (epic SCRUM-29) reads insider transactions from the
 `form4_transactions` table (see below) — no SEC call on the request path.

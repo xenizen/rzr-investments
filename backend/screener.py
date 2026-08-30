@@ -1,6 +1,6 @@
 """Screening and aggregation for the Insider-Transaction Screener (SCRUM-29).
 
-Takes the normalized Form 4 transaction records from ``screener_data`` and
+Takes the normalized Form 4 transaction records from ``screener_repo`` and
 rolls them up into per-issuer candidates: apply the share-size signal
 threshold, group what's left by issuer ticker, and flag issuers where more
 than one distinct insider transacted the same way.
@@ -48,7 +48,7 @@ def aggregate_by_issuer(transactions, min_shares):
     ``insider_count`` is the number of distinct insiders (by CIK, falling
     back to name when a filing has no CIK). ``multiple_insiders`` is
     ``insider_count >= 2``. All records in a group already share an issuer
-    and a transaction direction (``screener_data`` filters to one code), so
+    and a transaction direction (``screener_repo`` filters to one code), so
     the "same direction, same issuer" part of the flag is implicit.
 
     Raises ``ValueError`` for a ``min_shares`` outside ALLOWED_SHARE_SIZES.

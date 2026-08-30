@@ -6,9 +6,9 @@ The endpoint (SCRUM-35) runs the screen inside try/except and calls
 * ``ScreenerParamError`` -- an out-of-range query parameter. 400, and the
   message (which names the allowed values) goes straight to the client. The
   UI dropdowns mean users rarely trip this; it's for API robustness.
-* an upstream being unavailable -- the Postgres store, Alpaca market data,
-  or (only on the ``SCREENER_USE_DB=0`` fallback) SEC EDGAR. 5xx with a
-  short "try again" line; the underlying error is logged, never shown.
+* an upstream being unavailable -- the Postgres store or Alpaca market
+  data. 5xx with a short "try again" line; the underlying error is logged,
+  never shown.
 * anything else -- 500, generic message, logged with a stack trace.
 
 A screen that ran fine and simply matched nothing is *not* handled here --
@@ -18,7 +18,6 @@ through unchanged, so the UI can tell "no matches" from "it broke".
 
 from collections import namedtuple
 
-import httpx
 import psycopg
 
 import alpaca_client
@@ -51,12 +50,6 @@ _PRICE_RATE_LIMITED = "Market price data is rate-limited right now. Please try a
 _UNEXPECTED = "Something went wrong running the screen. Please try again."
 
 
-def _is_edgar_error(exc):
-    """True for an edgartools exception, matched by module name so this
-    module never imports edgartools (heavy: pandas/numpy) on the DB path."""
-    return type(exc).__module__.split(".", 1)[0] == "edgar"
-
-
 def classify(exc):
     """Map an exception from ``run_screen`` to a ``Classification``."""
     if isinstance(exc, ScreenerParamError):
@@ -74,8 +67,5 @@ def classify(exc):
         if getattr(exc, "status_code", None) == 429:
             return Classification(_PRICE_RATE_LIMITED, 503, "warning")
         return Classification(_PRICE_DOWN, 502, "warning")
-
-    if _is_edgar_error(exc) or isinstance(exc, httpx.HTTPError):
-        return Classification(_STORE_DOWN, 503, "warning")
 
     return Classification(_UNEXPECTED, 500, "exception")

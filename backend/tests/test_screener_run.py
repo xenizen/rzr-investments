@@ -37,7 +37,7 @@ RANKING_HIGHS = {t: 100.0 for t in RANKING_PRICES}
 
 
 def _source(records):
-    """Stand-in for screener_source.get_insider_transactions -- validates
+    """Stand-in for screener_repo.get_insider_transactions -- validates
     direction/months the same way the real DB source does, then returns
     fixed records."""
     def source(direction, *, months):
