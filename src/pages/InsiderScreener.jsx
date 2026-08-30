@@ -10,8 +10,8 @@ const DEFAULT_PARAMS = { direction: 'Purchase', shares: 10000, months: 1, pct_be
 const DISCLAIMER =
   'Not investment advice. Signals are derived from public SEC Form 4 filings and market data, for informational use only.'
 const SCREENING_MESSAGE = 'Screening…'
-const NO_MATCHES_MESSAGE = 'No matches for these parameters.'
-const REQUEST_FAILED_MESSAGE = 'Something went wrong running the screen.'
+const NO_MATCHES_MESSAGE = 'No matches for these parameters. Try a wider window or a smaller trade size.'
+const REQUEST_FAILED_MESSAGE = 'Something went wrong running the screen. Please try again.'
 
 function buildQuery({ direction, shares, months, pct_below_high }) {
   return new URLSearchParams({
@@ -22,13 +22,63 @@ function buildQuery({ direction, shares, months, pct_below_high }) {
   }).toString()
 }
 
+function formatShares(value) {
+  return Math.round(value).toLocaleString()
+}
+
+function formatPrice(value) {
+  return value == null ? '—' : `$${value.toFixed(2)}`
+}
+
+function ScreenerRow({ row, expanded, onToggle }) {
+  return (
+    <>
+      <tr data-testid="screener-result-row">
+        <td>
+          <button type="button" className="screener-ticker-btn" onClick={onToggle} aria-expanded={expanded}>
+            <span className="screener-ticker">{row.ticker}</span>
+            {row.multiple_insiders && (
+              <span className="screener-badge" title="More than one distinct insider">
+                multi-insider
+              </span>
+            )}
+          </button>
+          <span className="screener-company">{row.company}</span>
+        </td>
+        <td>{row.side}</td>
+        <td>{row.insider_count}</td>
+        <td>{formatShares(row.total_insider_shares)}</td>
+        <td>{formatPrice(row.current_price)}</td>
+        <td>{formatPrice(row.fifty_two_week_high)}</td>
+        <td>{row.discount_pct}%</td>
+        <td>{formatShares(row.suggested_quantity)}</td>
+      </tr>
+      {expanded && (
+        <tr className="screener-filings-row" data-testid="screener-filings">
+          <td colSpan={8}>
+            <ul className="screener-filings">
+              {row.filings.map((filing) => (
+                <li key={filing.accession_no}>
+                  <span>{filing.transaction_date}</span>
+                  <span>{filing.insider_name}</span>
+                  <span>{formatShares(filing.shares)} sh</span>
+                  <span>{formatPrice(filing.price)}</span>
+                </li>
+              ))}
+            </ul>
+          </td>
+        </tr>
+      )}
+    </>
+  )
+}
+
 function InsiderScreener() {
   const [params, setParams] = useState(DEFAULT_PARAMS)
   const [loading, setLoading] = useState(false)
-  const [message, setMessage] = useState('')
-  // The whole response body. SCRUM-38 renders it as a table with the
-  // multi-insider badge; SCRUM-39 adds pagination controls.
+  const [error, setError] = useState('')
   const [result, setResult] = useState(null)
+  const [expanded, setExpanded] = useState(null)
 
   function updateParam(key, value) {
     setParams((prev) => ({ ...prev, [key]: value }))
@@ -36,25 +86,27 @@ function InsiderScreener() {
 
   async function handleRunScreen() {
     setLoading(true)
+    setError('')
     setResult(null)
-    setMessage('')
+    setExpanded(null)
     try {
       const response = await fetch(
         `${import.meta.env.BASE_URL}api/insider-screener?${buildQuery(params)}`,
       )
       const data = await response.json()
       if (data.error) {
-        setMessage(data.error)
+        setError(data.error)
         return
       }
       setResult(data)
-      setMessage(data.total_count === 0 ? NO_MATCHES_MESSAGE : `${data.total_count} matches`)
     } catch {
-      setMessage(REQUEST_FAILED_MESSAGE)
+      setError(REQUEST_FAILED_MESSAGE)
     } finally {
       setLoading(false)
     }
   }
+
+  const rows = result?.results ?? []
 
   return (
     <div id="insider-screener" className="stock-card">
@@ -146,19 +198,54 @@ function InsiderScreener() {
         </p>
       </div>
 
-      <label id="lblScreenerMessage" className="stock-result">
-        {loading ? SCREENING_MESSAGE : message}
-      </label>
-
-      {/* SCRUM-38: results table + multi-insider badge + empty/error states.
-          SCRUM-39: pagination controls + loading/error refinement. */}
       <div id="screenerResults" className="screener-results">
-        {result?.results.map((row) => (
-          <div key={row.ticker} className="screener-row-stub" data-testid="screener-result-row">
-            <strong>{row.ticker}</strong> · {row.side} · {row.discount_pct}% below high
-            {row.multiple_insiders ? ' · multiple insiders' : ''}
-          </div>
-        ))}
+        {loading && <p className="screener-status">{SCREENING_MESSAGE}</p>}
+
+        {!loading && error && (
+          <p id="lblScreenerError" className="screener-status screener-error" role="alert">
+            {error}
+          </p>
+        )}
+
+        {!loading && !error && result && rows.length === 0 && (
+          <p id="lblScreenerEmpty" className="screener-status screener-empty">
+            {NO_MATCHES_MESSAGE}
+          </p>
+        )}
+
+        {!loading && !error && rows.length > 0 && (
+          <>
+            <p className="screener-count">
+              {result.total_count} {result.total_count === 1 ? 'match' : 'matches'}
+            </p>
+            <div className="insider-table-wrap">
+              <table id="screenerResultsTable" className="insider-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Stock</th>
+                    <th scope="col">Side</th>
+                    <th scope="col">Insiders</th>
+                    <th scope="col">Insider shares</th>
+                    <th scope="col">Price</th>
+                    <th scope="col">52-wk high</th>
+                    <th scope="col">% below</th>
+                    <th scope="col">Suggested qty</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <ScreenerRow
+                      key={row.ticker}
+                      row={row}
+                      expanded={expanded === row.ticker}
+                      onToggle={() => setExpanded((current) => (current === row.ticker ? null : row.ticker))}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </div>
 
       <p id="lblScreenerDisclaimer" className="screener-disclaimer" role="note">
