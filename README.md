@@ -101,10 +101,13 @@ cd backend
 ```
 
 Logs to stderr, exits non-zero on failure — wire it into cron (see
-SCRUM-49). Idempotent: re-running over a window upserts in place. When a
-new quarter is later backfilled, its `bulk` rows replace the `edgar` rows
-for the same filings.
+SCRUM-49). Idempotent: re-running over a window replaces each filing's rows
+in place. When a new quarter is later backfilled, its `bulk` rows replace
+the `edgar` rows for the same filings.
 
-The **first** run against a table only seeded through a past quarter has a
-months-wide window (tens of thousands of filings, an hour or more). Use
-`--since` to walk it forward in chunks.
+Each run parses at most `--max-filings` filings (default 4000, ~5 days of
+activity), keeping whole days from the oldest end so successive runs walk a
+backlog forward. The **first** run against a table only seeded through a
+past quarter therefore takes several nights to catch up — or pass
+`--max-filings 0` for a one-shot run (tens of thousands of filings, an hour
+or more), optionally with `--since` to bound the window.

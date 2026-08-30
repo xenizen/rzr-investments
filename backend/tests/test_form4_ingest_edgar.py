@@ -50,6 +50,40 @@ def test_resolve_window_falls_back_when_table_is_empty():
     assert (start, end) == (date(2026, 8, 21), date(2026, 8, 28))
 
 
+# --- _cap_filings ------------------------------------------------------
+
+
+def _dated(day, n):
+    return [MagicMock(filing_date=date(2026, 7, day)) for _ in range(n)]
+
+
+def test_cap_filings_passes_through_under_the_cap():
+    filings = _dated(1, 10) + _dated(2, 10)
+    kept, total = edgar._cap_filings(filings, max_filings=100)
+    assert (len(kept), total) == (20, 20)
+
+
+def test_cap_filings_keeps_whole_days_from_the_oldest_end():
+    # 3 days x 40 filings; cap 50 -> keep days 1 and 2 whole (80), not a
+    # partial day, so the next run resumes cleanly at day 3.
+    filings = _dated(3, 40) + _dated(1, 40) + _dated(2, 40)
+    kept, total = edgar._cap_filings(filings, max_filings=50)
+    assert total == 120
+    assert {f.filing_date for f in kept} == {date(2026, 7, 1), date(2026, 7, 2)}
+
+
+def test_cap_filings_takes_a_single_oversized_day_whole():
+    filings = _dated(1, 9000)
+    kept, total = edgar._cap_filings(filings, max_filings=4000)
+    assert (len(kept), total) == (9000, 9000)  # progress beats the cap
+
+
+def test_cap_filings_zero_lifts_the_cap():
+    filings = _dated(1, 9000)
+    kept, _ = edgar._cap_filings(filings, max_filings=0)
+    assert len(kept) == 9000
+
+
 # --- normalize_filing ----------------------------------------------------
 
 
@@ -193,3 +227,25 @@ def test_ingest_skips_filings_already_covered_by_bulk(db_conn):
     _ingest(db_conn, filings)
 
     assert _rows(db_conn) == [("acc-bulk", "bulk", 1), ("acc-new", "edgar", 1)]
+
+
+@pg
+def test_reingest_replaces_prior_edgar_rows_even_when_row_order_shifts(db_conn):
+    # trans_sk is synthesized from market_trades position, so a filing
+    # re-parsed with a different row order gets different keys. The load
+    # must still replace the old rows, not stack new ones beside them.
+    first = [_filing([{"Date": "2026-07-08", "Shares": 100, "Price": 1.0, "Code": "P"},
+                      {"Date": "2026-07-09", "Shares": 200, "Price": 2.0, "Code": "S"}],
+                     accession_no="acc-1")]
+    _ingest(db_conn, first)
+
+    reordered = [_filing([{"Date": "2026-07-09", "Shares": 200, "Price": 2.0, "Code": "S"},
+                          {"Date": "2026-07-08", "Shares": 100, "Price": 1.0, "Code": "P"}],
+                         accession_no="acc-1")]
+    _ingest(db_conn, reordered)
+
+    total_shares = db_conn.execute(
+        "SELECT sum(shares) FROM form4_transactions WHERE accession_no = 'acc-1'"
+    ).fetchone()[0]
+    assert _rows(db_conn) == [("acc-1", "edgar", 2)]  # 2 rows, not 4
+    assert total_shares == 300  # not 600

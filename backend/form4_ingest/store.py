@@ -1,18 +1,23 @@
 """Upsert normalized Form 4 records into ``form4_transactions``.
 
 Shared by the quarterly bulk backfill (SCRUM-44) and the nightly EDGAR
-ingest (SCRUM-45). Two keys are in play:
+ingest (SCRUM-45).
 
-* ``(accession_no, trans_sk)`` -- the row natural key, for within-source
-  idempotency: re-running either loader over the same input updates rows
-  in place rather than duplicating them.
-* ``accession_no`` -- the supersede unit *across* sources. The bulk data
-  set carries SEC's real per-line surrogate key (``NONDERIV_TRANS_SK``);
-  the nightly job can only synthesize one, so ``bulk`` and ``edgar`` rows
-  for the same filing never share ``trans_sk``. Instead: a ``bulk`` load
-  deletes any ``edgar`` rows for the filings it touches, and the ``edgar``
-  job skips any filing already covered by ``bulk``. Authoritative
-  quarterly data always wins.
+``accession_no`` is the unit of replacement. Each load, per filing it
+touches, deletes the existing rows for that filing and writes the new set:
+
+* a ``bulk`` load replaces both ``bulk`` and ``edgar`` rows for its
+  filings (authoritative quarterly data wins);
+* an ``edgar`` load skips any filing already covered by ``bulk``, and for
+  the rest replaces prior ``edgar`` rows.
+
+Replacing per filing -- rather than upserting on ``(accession_no,
+trans_sk)`` -- keeps the two sources' incompatible surrogate keys from
+piling up: bulk carries SEC's real ``NONDERIV_TRANS_SK`` while the nightly
+job can only synthesize one from row position, so a filing re-parsed with a
+different market-trade order would otherwise leave stale rows behind and
+double-count. The ``(accession_no, trans_sk)`` unique constraint still
+guards against a duplicate line within one batch.
 """
 
 from collections import OrderedDict
@@ -36,7 +41,7 @@ _DATA_COLUMNS = (
 _ALL_COLUMNS = _DATA_COLUMNS + ("source",)
 _UPDATABLE = tuple(c for c in _ALL_COLUMNS if c not in ("accession_no", "trans_sk"))
 
-_UPSERT = f"""
+_INSERT = f"""
     INSERT INTO form4_transactions ({", ".join(_ALL_COLUMNS)})
     VALUES ({", ".join(["%s"] * len(_ALL_COLUMNS))})
     ON CONFLICT (accession_no, trans_sk) DO UPDATE SET
@@ -48,12 +53,13 @@ VALID_SOURCES = ("bulk", "edgar")
 
 
 def upsert_transactions(conn, records, source, *, batch_size=1000):
-    """Upsert ``records`` (dicts from ``form4_ingest.bulk.parse_source`` or
+    """Load ``records`` (dicts from ``form4_ingest.bulk.parse_source`` or
     ``form4_ingest.edgar.normalize_filing``) tagged with ``source``.
 
-    Runs on ``conn`` without committing -- the caller owns the transaction.
-    Returns the number of rows written (after the cross-source supersede
-    rules have been applied).
+    Per filing touched, the existing rows are deleted and the new set
+    written -- see the module docstring for why replacement rather than
+    key-wise upsert. Runs on ``conn`` without committing (the caller owns
+    the transaction). Returns the number of rows written.
     """
     if source not in VALID_SOURCES:
         raise ValueError(f"source must be one of {VALID_SOURCES}")
@@ -64,15 +70,8 @@ def upsert_transactions(conn, records, source, *, batch_size=1000):
         return 0
 
     with conn.cursor() as cur:
-        if source == "bulk":
-            # Authoritative: drop stale edgar rows for these filings first.
-            cur.execute(
-                "DELETE FROM form4_transactions "
-                "WHERE source = 'edgar' AND accession_no = ANY(%s)",
-                (accessions,),
-            )
-            rows = records
-        else:
+        if source == "edgar":
+            # Bulk data is authoritative -- leave any bulk-covered filing be.
             covered = {
                 row[0]
                 for row in cur.execute(
@@ -82,16 +81,26 @@ def upsert_transactions(conn, records, source, *, batch_size=1000):
                 ).fetchall()
             }
             rows = [record for record in records if record["accession_no"] not in covered]
+            replace = [accession for accession in accessions if accession not in covered]
+        else:  # bulk replaces whatever is there, bulk or edgar
+            rows = records
+            replace = accessions
+
+        if replace:
+            cur.execute(
+                "DELETE FROM form4_transactions WHERE accession_no = ANY(%s)",
+                (replace,),
+            )
 
         written = 0
         batch = []
         for record in rows:
             batch.append(tuple(record.get(column) for column in _DATA_COLUMNS) + (source,))
             if len(batch) >= batch_size:
-                cur.executemany(_UPSERT, batch)
+                cur.executemany(_INSERT, batch)
                 written += len(batch)
                 batch = []
         if batch:
-            cur.executemany(_UPSERT, batch)
+            cur.executemany(_INSERT, batch)
             written += len(batch)
     return written

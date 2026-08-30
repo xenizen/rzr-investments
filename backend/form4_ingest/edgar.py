@@ -40,6 +40,15 @@ FORM_TYPE = "4"
 # this far. A real first run should use --since to bound the catch-up.
 DEFAULT_FALLBACK_DAYS = 7
 
+# Filings parsed per run. Steady state is 1-2 days (~1600 filings); a wider
+# window -- the first run after a bulk backfill, or catching up after an
+# outage -- is capped so one invocation can't fire tens of thousands of SEC
+# fetches. The cap keeps whole filing-days from the oldest end, so
+# max(filing_date) advances and successive runs walk the backlog forward.
+# Pass max_filings=0 (CLI: --max-filings 0) to lift it for a deliberate
+# one-shot catch-up.
+MAX_FILINGS_PER_RUN = 4000
+
 # Concurrent filing fetches, with the same CageFS-safe fallback as
 # insider_data. edgartools rate-limits SEC requests itself.
 MAX_WORKERS = 10
@@ -148,12 +157,28 @@ def _load_filings(filings, loader):
         executor.shutdown(wait=False, cancel_futures=True)
 
 
+def _cap_filings(filings, max_filings):
+    """``(kept, total)``. When ``total`` exceeds ``max_filings``, keep the
+    oldest filings up to a whole-day boundary near the cap -- never a
+    partial day, so ``max(filing_date)`` advances and the next run resumes
+    cleanly after the last day kept. ``max_filings`` of 0/None means no cap.
+    """
+    total = len(filings)
+    if not max_filings or total <= max_filings:
+        return filings, total
+    ordered = sorted(filings, key=lambda filing: filing.filing_date)
+    cutoff = ordered[max_filings - 1].filing_date
+    kept = [filing for filing in ordered if filing.filing_date <= cutoff]
+    return kept, total
+
+
 def ingest(
     conn,
     *,
     today=None,
     since=None,
     fallback_days=DEFAULT_FALLBACK_DAYS,
+    max_filings=MAX_FILINGS_PER_RUN,
     filings_factory=None,
     dry_run=False,
 ):
@@ -166,8 +191,14 @@ def ingest(
     logger.info("form4 ingest: window %s .. %s", start, end)
 
     factory = filings_factory or _default_filings
-    filings = list(factory(start, end) or [])
-    logger.info("form4 ingest: %d Form 4 filings in window", len(filings))
+    filings, in_window = _cap_filings(list(factory(start, end) or []), max_filings)
+    if len(filings) < in_window:
+        logger.warning(
+            "form4 ingest: %d filings in window, parsing the oldest %d; "
+            "re-run to continue (or --max-filings 0 for the whole window)",
+            in_window, len(filings),
+        )
+    logger.info("form4 ingest: parsing %d Form 4 filings", len(filings))
 
     parsed = _load_filings(filings, normalize_filing)
     records = [record for batch in parsed for record in batch]
@@ -183,7 +214,8 @@ def ingest(
     return {
         "window_start": start,
         "window_end": end,
-        "filings": len(filings),
+        "filings_in_window": in_window,
+        "filings_parsed": len(filings),
         "records_parsed": len(records),
         # Rows sent to the DB. On a re-run over the same window this still
         # counts every row -- they upsert in place, leaving the table

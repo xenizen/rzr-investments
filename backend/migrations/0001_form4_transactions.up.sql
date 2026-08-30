@@ -32,9 +32,9 @@ CREATE TABLE form4_transactions (
     source            TEXT        NOT NULL CHECK (source IN ('bulk', 'edgar')),
     ingested_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    -- Re-running either loader must not duplicate a line: both upsert on
-    -- this key. A later bulk row supersedes an earlier edgar row for the
-    -- same line once a quarter is published (SCRUM-45).
+    -- Guards against a duplicate transaction line within one load batch.
+    -- Cross-load, the loaders replace each touched filing's rows wholesale
+    -- rather than upserting on this key (see form4_ingest/store.py).
     CONSTRAINT form4_transactions_natural_key UNIQUE (accession_no, trans_sk)
 );
 
