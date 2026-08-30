@@ -196,6 +196,42 @@ describe('InsiderScreener results', () => {
   })
 })
 
+describe('InsiderScreener copy', () => {
+  it('always shows the data-freshness note', () => {
+    render(<InsiderScreener />)
+    const note = document.getElementById('lblScreenerFreshness')
+    expect(note).toHaveTextContent(/quarterly bulk Form 4 data/i)
+    expect(note).toHaveTextContent(/topped up nightly from EDGAR/i)
+  })
+
+  it('names the review window once a screen has run, matching the selection', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(screenResponse([row()]))))
+    render(<InsiderScreener />)
+
+    // nothing before the first run
+    expect(document.getElementById('lblScreenerWindow')).toBeNull()
+
+    fireEvent.change(document.getElementById('selScreenerMonths'), { target: { value: '3' } })
+    runScreen()
+
+    await screen.findByRole('table')
+    expect(document.getElementById('lblScreenerWindow')).toHaveTextContent(
+      'Reviewing insider filings from the last 3 months.',
+    )
+  })
+
+  it('names the review window on a zero-result screen too', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(screenResponse([]))))
+    render(<InsiderScreener />)
+    runScreen()
+
+    await screen.findByText(/no matches for these parameters/i)
+    expect(document.getElementById('lblScreenerWindow')).toHaveTextContent(
+      'Reviewing insider filings from the last month.',
+    )
+  })
+})
+
 describe('InsiderScreener pagination', () => {
   it('shows no pagination controls before a screen is run', () => {
     render(<InsiderScreener />)

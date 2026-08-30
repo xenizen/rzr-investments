@@ -9,9 +9,15 @@ const DEFAULT_PARAMS = { direction: 'Purchase', shares: 10000, months: 1, pct_be
 
 const DISCLAIMER =
   'Not investment advice. Signals are derived from public SEC Form 4 filings and market data, for informational use only.'
+const FRESHNESS_NOTE =
+  'Insider history comes from SEC’s quarterly bulk Form 4 data, topped up nightly from EDGAR — the most recent day or two of filings may not be included yet.'
 const SCREENING_MESSAGE = 'Screening…'
 const NO_MATCHES_MESSAGE = 'No matches for these parameters. Try a wider window or a smaller trade size.'
 const REQUEST_FAILED_MESSAGE = 'Something went wrong running the screen. Please try again.'
+
+function reviewWindowLabel(months) {
+  return months === 1 ? 'the last month' : `the last ${months} months`
+}
 
 function buildQuery({ direction, shares, months, pct_below_high }, page) {
   const query = new URLSearchParams({
@@ -221,12 +227,19 @@ function InsiderScreener() {
         </button>
 
         <p className="screener-hint">
-          Insider trade size is a signal threshold on the Form 4 transaction, not a trade quantity. “% below 52-week
-          high” is how far under its high a stock must trade to qualify.
+          Insider trade size is a signal threshold on the Form 4 transaction, not a trade quantity. “Months to review”
+          sets how far back Form 4 filings count toward the signal. “% below 52-week high” is how far under its high a
+          stock must trade to qualify.
         </p>
       </div>
 
       <div id="screenerResults" className="screener-results">
+        {activeParams && (
+          <p id="lblScreenerWindow" className="screener-window">
+            Reviewing insider filings from {reviewWindowLabel(activeParams.months)}.
+          </p>
+        )}
+
         {!loading && error && (
           <p id="lblScreenerError" className="screener-status screener-error" role="alert">
             {error}
@@ -298,6 +311,10 @@ function InsiderScreener() {
           </>
         )}
       </div>
+
+      <p id="lblScreenerFreshness" className="screener-freshness" role="note">
+        {FRESHNESS_NOTE}
+      </p>
 
       <p id="lblScreenerDisclaimer" className="screener-disclaimer" role="note">
         {DISCLAIMER}
