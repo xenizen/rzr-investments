@@ -36,6 +36,12 @@ It uses Alpaca for read-only market data and paper-account context only; it
 never places orders, and the trading client is pinned to Alpaca's paper
 environment.
 
+## Deploying
+
+FTP the code up, run migrations/ingest over SSH, restart Passenger. Full
+checklist and rollback steps: [docs/deploying.md](docs/deploying.md)
+(database side: [docs/production-database.md](docs/production-database.md)).
+
 ## Insider Screener
 
 See [docs/insider-screener-architecture.md](docs/insider-screener-architecture.md)
