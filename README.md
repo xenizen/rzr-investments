@@ -113,10 +113,13 @@ cd backend
 .venv/bin/python -m form4_ingest.nightly --dry-run
 ```
 
-Logs to stderr, exits non-zero on failure — wire it into cron (see
-SCRUM-49). Idempotent: re-running over a window replaces each filing's rows
-in place. When a new quarter is later backfilled, its `bulk` rows replace
-the `edgar` rows for the same filings.
+Logs to stderr, exits non-zero on failure. In production it runs from cron
+via `scripts/nightly_ingest.sh` (silent on success, emails on failure) with
+`scripts/check_ingest_fresh.sh` as a staleness alarm — see
+[docs/form4-ingest-ops.md](docs/form4-ingest-ops.md). Idempotent:
+re-running over a window replaces each filing's rows in place. When a new
+quarter is later backfilled, its `bulk` rows replace the `edgar` rows for
+the same filings.
 
 Each run parses at most `--max-filings` filings (default 4000, ~5 days of
 activity), keeping whole days from the oldest end so successive runs walk a

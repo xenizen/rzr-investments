@@ -57,6 +57,7 @@ def _lookup(mapping):
 def _run(records, prices, highs, **kwargs):
     kwargs.setdefault("min_shares", 5000)
     kwargs.setdefault("pct_below_high", 50)
+    kwargs.setdefault("data_through_lookup", lambda: "2026-06-30")
     return run_screen(
         transactions_source=_source(records),
         price_lookup=_lookup(prices),
@@ -179,6 +180,19 @@ def test_empty_when_nothing_survives_the_price_filter():
     assert result["results"] == []
     assert result["total_count"] == 0
     assert result["total_pages"] == 1
+
+
+def test_response_carries_data_through(monkeypatch):
+    result = _run(RANKING_TXNS, RANKING_PRICES, RANKING_HIGHS)
+    assert result["data_through"] == "2026-06-30"
+
+    # default lookup is best-effort: no DB -> None, screen still returns
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    bare = run_screen(
+        transactions_source=_source([]), min_shares=5000, pct_below_high=50
+    )
+    assert bare["data_through"] is None
+    assert bare["results"] == []
 
 
 def test_passes_direction_and_months_to_the_source():
