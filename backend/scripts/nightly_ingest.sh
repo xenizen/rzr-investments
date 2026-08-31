@@ -22,7 +22,13 @@ LOG="${INGEST_LOG:-$HOME/logs/form4-nightly.log}"
 STATE_DIR="${INGEST_STATE_DIR:-$HOME/.local/state/rzr-invest}"
 
 mkdir -p "$(dirname "$LOG")" "$STATE_DIR"
-cd "$here"
+cd "$here" || { echo "rzr-invest Form 4 nightly ingest: cannot cd to $here"; exit 1; }
+
+# Keep the log bounded on shared-hosting quota: once it passes ~2 MB, drop
+# all but the last 500 lines.
+if [[ -f "$LOG" && "$(wc -c < "$LOG")" -gt $((2 * 1024 * 1024)) ]]; then
+    tail -n 500 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+fi
 
 echo "=== $(date +%FT%T) nightly ingest starting ===" >> "$LOG"
 if "$PYBIN" -m form4_ingest.nightly "$@" >> "$LOG" 2>&1; then

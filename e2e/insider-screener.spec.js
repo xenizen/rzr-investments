@@ -35,7 +35,7 @@ function makeRow(over = {}) {
   }
 }
 
-function envelope(rows, { page = 1, total_count = rows.length } = {}) {
+function envelope(rows, { page = 1, total_count = rows.length, data_through = '2026-06-30' } = {}) {
   return {
     results: rows,
     page,
@@ -43,6 +43,7 @@ function envelope(rows, { page = 1, total_count = rows.length } = {}) {
     total_count,
     total_pages: Math.max(1, Math.ceil(total_count / 10)),
     has_next: page * 10 < total_count,
+    data_through,
   }
 }
 
@@ -137,6 +138,15 @@ test.describe('Insider Screener', () => {
     await runScreen(page)
 
     await expect(page.locator('#lblScreenerWindow')).toHaveText('Reviewing insider filings from the last 3 months.')
+  })
+
+  test('the freshness note shows the data-through date after a screen', async ({ page }) => {
+    await page.route(API, (route) => route.fulfill({ json: envelope([makeRow()], { data_through: '2026-06-30' }) }))
+
+    await gotoScreener(page)
+    await runScreen(page)
+
+    await expect(page.locator('#lblScreenerFreshness')).toContainText('Insider data current through Jun 30, 2026')
   })
 
   test('clicking a ticker reveals its contributing filings', async ({ page }) => {

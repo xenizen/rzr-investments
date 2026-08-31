@@ -22,7 +22,13 @@ if [[ ! -f "$marker" ]]; then
     exit 1
 fi
 
-age_hours=$(( ( $(date +%s) - $(cat "$marker") ) / 3600 ))
+last="$(cat "$marker" 2>/dev/null || true)"
+if [[ ! "$last" =~ ^[0-9]+$ ]]; then
+    echo "rzr-invest Form 4 ingest: marker $marker is unreadable or corrupt (got '$last')."
+    exit 1
+fi
+
+age_hours=$(( ( $(date +%s) - last ) / 3600 ))
 if (( age_hours > MAX_AGE_HOURS )); then
     echo "rzr-invest Form 4 ingest is STALE: last success ${age_hours}h ago (limit ${MAX_AGE_HOURS}h). Check $HOME/logs/form4-nightly.log."
     exit 1

@@ -84,7 +84,9 @@ rows replace whatever `edgar` rows the nightly job wrote for those filings:
 
 ```bash
 cd <app-root>
-curl -sS -A "$EDGAR_IDENTITY" -o data/form345/2026q3_form345.zip \
+# -f so a 403/404 (bad UA, or the quarter isn't posted yet) fails loudly
+# instead of writing an HTML error page into the .zip.
+curl -fsS -A "$EDGAR_IDENTITY" -o data/form345/2026q3_form345.zip \
   https://www.sec.gov/files/structureddata/data/insider-transactions-data-sets/2026q3_form345.zip
 $PYTHON -m form4_ingest.backfill data/form345/2026q3_form345.zip
 ```
