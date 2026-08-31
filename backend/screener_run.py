@@ -107,6 +107,7 @@ def run_screen(
     months=screener_repo.DEFAULT_MONTHS,
     page=1,
     transactions_source=None,
+    data_through_lookup=None,
     price_lookup=None,
     high_lookup=None,
 ):
@@ -119,7 +120,10 @@ def run_screen(
     Returns::
 
         {results: [row, ...], page, page_size, total_count, total_pages,
-         has_next}
+         has_next, data_through}
+
+    ``data_through`` is the newest ``filing_date`` in the store (ISO date
+    string, or ``None``) -- the "data current through" badge (SCRUM-49).
 
     Raises ``screener_errors.ScreenerParamError`` (a ``ValueError``) for any
     out-of-range parameter, before any DB or Alpaca call. Upstream failures
@@ -144,6 +148,8 @@ def run_screen(
     start = (page - 1) * PAGE_SIZE
     window = ranked[start : start + PAGE_SIZE]
 
+    data_through = (data_through_lookup or screener_repo.data_through)()
+
     return {
         "results": [_row(candidate, min_shares) for candidate in window],
         "page": page,
@@ -151,4 +157,5 @@ def run_screen(
         "total_count": total_count,
         "total_pages": total_pages,
         "has_next": start + PAGE_SIZE < total_count,
+        "data_through": data_through,
     }

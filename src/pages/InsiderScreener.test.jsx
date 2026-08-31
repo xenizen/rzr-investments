@@ -36,7 +36,7 @@ function row(over = {}) {
 }
 
 // Response builder that fills in the pagination envelope from the rows.
-function screenResponse(rows, { page = 1, total_count = rows.length } = {}) {
+function screenResponse(rows, { page = 1, total_count = rows.length, data_through = '2026-06-30' } = {}) {
   return {
     results: rows,
     page,
@@ -44,6 +44,7 @@ function screenResponse(rows, { page = 1, total_count = rows.length } = {}) {
     total_count,
     total_pages: Math.max(1, Math.ceil(total_count / 10)),
     has_next: page * 10 < total_count,
+    data_through,
   }
 }
 
@@ -197,11 +198,39 @@ describe('InsiderScreener results', () => {
 })
 
 describe('InsiderScreener copy', () => {
-  it('always shows the data-freshness note', () => {
+  it('shows the generic data-freshness note before a screen has run', () => {
     render(<InsiderScreener />)
     const note = document.getElementById('lblScreenerFreshness')
     expect(note).toHaveTextContent(/quarterly bulk Form 4 data/i)
     expect(note).toHaveTextContent(/topped up nightly from EDGAR/i)
+  })
+
+  it('shows the data-through date from the response after a screen', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse(screenResponse([row()], { data_through: '2026-06-30' }))),
+    )
+    render(<InsiderScreener />)
+    runScreen()
+
+    await screen.findByRole('table')
+    expect(document.getElementById('lblScreenerFreshness')).toHaveTextContent(
+      'Insider data current through Jun 30, 2026.',
+    )
+  })
+
+  it('falls back to the generic note when the response has no data_through', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse(screenResponse([row()], { data_through: null }))),
+    )
+    render(<InsiderScreener />)
+    runScreen()
+
+    await screen.findByRole('table')
+    expect(document.getElementById('lblScreenerFreshness')).toHaveTextContent(
+      /quarterly bulk Form 4 data/i,
+    )
   })
 
   it('names the review window once a screen has run, matching the selection', async () => {

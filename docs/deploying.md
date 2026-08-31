@@ -85,15 +85,25 @@ trace) — check `DATABASE_URL` and that the app was restarted after editing
 
 ## 5. Cron (same day, once)
 
-cPanel → **Cron Jobs**:
+cPanel → **Cron Jobs**. `<app-root>` is the deployed directory (the repo's
+`backend/` contents, flattened); set `PYTHON` to the venv python from
+cPanel → Setup Python App.
 
-```
-# PostgreSQL backup (docs/production-database.md §5)
-15 4 * * *  cd ~/<app-root>/backend && ./scripts/backup_db.sh >> ~/logs/db-backup.log 2>&1
+```cron
+PYTHON=/home/robins67/virtualenv/resumesite/investapp/3.12/bin/python
 
-# Nightly Form 4 ingest — interim line, pending SCRUM-49 (wrapper + alerting)
-30 5 * * *  cd ~/<app-root>/backend && ~/virtualenv/<app-root>/<pyver>/bin/python -m form4_ingest.nightly >> ~/logs/form4-nightly.log 2>&1
+# PostgreSQL backup — docs/production-database.md §5
+15 4 * * *  cd <app-root> && ./scripts/backup_db.sh >> ~/logs/db-backup.log 2>&1
+
+# Nightly Form 4 ingest + staleness alarm — docs/form4-ingest-ops.md
+30 5 * * *  <app-root>/scripts/nightly_ingest.sh
+0  9 * * *  <app-root>/scripts/check_ingest_fresh.sh
 ```
+
+`nightly_ingest.sh` is silent on success and emails the log tail on
+failure; `check_ingest_fresh.sh` emails if there's been no successful run
+in 48h. Recovery and the new-quarter procedure are in
+[form4-ingest-ops.md](form4-ingest-ops.md).
 
 ## 6. Wrap up
 

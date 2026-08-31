@@ -19,6 +19,13 @@ function reviewWindowLabel(months) {
   return months === 1 ? 'the last month' : `the last ${months} months`
 }
 
+function formatThroughDate(iso) {
+  const parsed = new Date(`${iso}T00:00:00`)
+  return Number.isNaN(parsed.getTime())
+    ? null
+    : parsed.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
 function buildQuery({ direction, shares, months, pct_below_high }, page) {
   const query = new URLSearchParams({
     direction,
@@ -141,6 +148,11 @@ function InsiderScreener() {
   const showTable = Boolean(result && result.total_count > 0)
   const rangeStart = showTable ? (page - 1) * result.page_size + 1 : 0
   const rangeEnd = rangeStart ? rangeStart + rows.length - 1 : 0
+
+  const dataThrough = result?.data_through ? formatThroughDate(result.data_through) : null
+  const freshnessText = dataThrough
+    ? `Insider data current through ${dataThrough}. New filings can take a day or two to appear.`
+    : FRESHNESS_NOTE
 
   return (
     <div id="insider-screener" className="stock-card">
@@ -313,7 +325,7 @@ function InsiderScreener() {
       </div>
 
       <p id="lblScreenerFreshness" className="screener-freshness" role="note">
-        {FRESHNESS_NOTE}
+        {freshnessText}
       </p>
 
       <p id="lblScreenerDisclaimer" className="screener-disclaimer" role="note">

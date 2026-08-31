@@ -163,3 +163,28 @@ def test_output_feeds_aggregate_by_issuer(seeded):
     assert candidates[0]["ticker"] == "AAPL"
     assert candidates[0]["total_shares"] == 30000
     assert candidates[0]["multiple_insiders"] is True
+
+
+# --- data_through (SCRUM-49) ------------------------------------------
+
+
+def test_data_through_is_none_when_db_is_unreachable(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    assert screener_repo.data_through() is None
+
+
+@pg
+def test_data_through_returns_the_newest_filing_date(seeded):
+    conn, seed = seeded
+    seed([
+        _row(trans_sk="0", accession_no="a", filing_date="2026-08-10"),
+        _row(trans_sk="1", accession_no="b", filing_date="2026-08-25"),
+        _row(trans_sk="2", accession_no="c", filing_date="2026-07-30"),
+    ])
+    assert screener_repo.data_through(conn=conn) == "2026-08-25"
+
+
+@pg
+def test_data_through_is_none_for_an_empty_table(seeded):
+    conn, _ = seeded
+    assert screener_repo.data_through(conn=conn) is None

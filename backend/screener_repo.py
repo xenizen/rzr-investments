@@ -18,6 +18,8 @@ Because history is cheap to query, ``get_insider_transactions`` takes a
 import calendar
 from datetime import date
 
+import psycopg
+
 import db
 
 # "Purchase" / "Sold" -> Form 4 transaction code.
@@ -39,6 +41,8 @@ _SELECT = """
       AND transaction_date >= %s
     ORDER BY transaction_date DESC
 """
+
+_MAX_FILING_DATE = "SELECT max(filing_date) FROM form4_transactions"
 
 
 def _validate_direction(direction):
@@ -117,3 +121,24 @@ def get_insider_transactions(
         return _fetch(conn, code, since)
     with db.connection() as owned:
         return _fetch(owned, code, since)
+
+
+def data_through(conn=None):
+    """Newest ``filing_date`` in the store, as an ISO date string, or
+    ``None`` when the table is empty or the DB can't be reached.
+
+    Best-effort -- powers the screener's "data current through <date>"
+    badge (SCRUM-49), so a failure here must never break a screen. If the
+    store were truly unreachable, ``get_insider_transactions`` would have
+    raised first and the endpoint would already have returned a 503.
+    """
+    try:
+        if conn is not None:
+            row = conn.execute(_MAX_FILING_DATE).fetchone()
+        else:
+            with db.connection() as owned:
+                row = owned.execute(_MAX_FILING_DATE).fetchone()
+    except (psycopg.Error, db.DatabaseNotConfigured):
+        return None
+    value = row[0] if row else None
+    return value.isoformat() if value else None
