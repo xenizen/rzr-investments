@@ -38,9 +38,11 @@ environment.
 
 ## Deploying
 
-FTP the code up, run migrations/ingest over SSH, restart Passenger. Full
-checklist and rollback steps: [docs/deploying.md](docs/deploying.md)
-(database side: [docs/production-database.md](docs/production-database.md)).
+rsync the code up over SSH (the server layout is flat — the repo's
+`backend/` contents are the app root, no `backend/` subdirectory there),
+run migrations/ingest over SSH, restart Passenger. Full checklist and
+rollback steps: [docs/deploying.md](docs/deploying.md) (database side:
+[docs/production-database.md](docs/production-database.md)).
 
 ## Insider Screener
 
